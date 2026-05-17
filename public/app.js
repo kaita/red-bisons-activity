@@ -1,0 +1,768 @@
+const state = {
+  token: localStorage.getItem("redBisonsToken") || "",
+  config: null,
+  user: null,
+  isAdmin: false,
+  linkedMemberIds: [],
+  members: [],
+  activities: [],
+  responses: [],
+  comments: [],
+  selectedActivityId: "",
+  filter: "all",
+  view: "list",
+};
+
+const app = document.querySelector("#app");
+
+init().catch((error) => {
+  renderFatal(error.message || "アプリの初期化に失敗しました。");
+});
+
+async function init() {
+  state.config = await apiConfig();
+  renderLogin();
+  if (state.token) {
+    await loadBootstrap();
+  }
+  setupGoogleSignIn();
+}
+
+async function apiConfig() {
+  const response = await fetch("/api/config");
+  if (!response.ok) {
+    throw new Error("設定を取得できませんでした。");
+  }
+  return response.json();
+}
+
+function setupGoogleSignIn() {
+  if (!state.config.googleClientId) {
+    renderFatal("Google OAuth Client ID が未設定です。");
+    return;
+  }
+
+  const timer = setInterval(() => {
+    if (!window.google?.accounts?.id) return;
+    clearInterval(timer);
+    window.google.accounts.id.initialize({
+      client_id: state.config.googleClientId,
+      callback: async (credentialResponse) => {
+        state.token = credentialResponse.credential;
+        localStorage.setItem("redBisonsToken", state.token);
+        await loadBootstrap();
+      },
+    });
+    const target = document.querySelector("#google-signin");
+    if (target) {
+      window.google.accounts.id.renderButton(target, {
+        theme: "outline",
+        size: "large",
+        text: "signin_with",
+        shape: "rectangular",
+      });
+    }
+  }, 80);
+}
+
+async function loadBootstrap() {
+  try {
+    const data = await apiGet("/api/bootstrap");
+    Object.assign(state, data);
+    state.selectedActivityId = state.activities[0]?.id || "";
+    renderApp();
+  } catch (error) {
+    localStorage.removeItem("redBisonsToken");
+    state.token = "";
+    renderLogin(error.message);
+    setupGoogleSignIn();
+  }
+}
+
+async function apiGet(path) {
+  const response = await fetch(path, {
+    headers: authHeaders(),
+  });
+  return readApiResponse(response);
+}
+
+async function apiPost(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return readApiResponse(response);
+}
+
+function authHeaders() {
+  return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+}
+
+async function readApiResponse(response) {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "処理に失敗しました。");
+  }
+  return data;
+}
+
+function renderLogin(errorMessage = "") {
+  app.innerHTML = "";
+  const main = element("main", "login-screen");
+  const mark = element("img", "login-mark");
+  mark.src = "/red-bisons-mark.svg";
+  mark.alt = "RED BISONS";
+  main.append(
+    mark,
+    element("h1", "", "RED BISONS 活動管理"),
+    element("p", "", "Googleログインで活動予定、出欠、見守り状況を確認します。")
+  );
+  if (errorMessage) main.append(element("div", "error", errorMessage));
+  const signin = element("div");
+  signin.id = "google-signin";
+  main.append(signin, element("p", "muted small", "登録済みの保護者・管理者アカウントのみ利用できます。"));
+  app.append(main);
+}
+
+function renderApp() {
+  const selected = selectedActivity();
+  app.innerHTML = "";
+  app.append(renderTopbar(), renderLayout(selected));
+}
+
+function renderTopbar() {
+  const header = element("header", "topbar");
+  const brand = element("div", "brand");
+  const mark = element("img");
+  mark.src = "/red-bisons-mark.svg";
+  mark.alt = "";
+  brand.append(mark, element("div", "", "", [
+    element("strong", "", "RED BISONS"),
+    element("span", "", "活動管理"),
+  ]));
+
+  const menu = element("div", "user-menu");
+  if (state.user?.picture) {
+    const picture = element("img");
+    picture.src = state.user.picture;
+    picture.alt = "";
+    menu.append(picture);
+  }
+  menu.append(element("span", "user-name", state.user?.name || state.user?.email || ""));
+  const signout = element("button", "button ghost", "ログアウト");
+  signout.type = "button";
+  signout.addEventListener("click", () => {
+    localStorage.removeItem("redBisonsToken");
+    state.token = "";
+    renderLogin();
+    setupGoogleSignIn();
+  });
+  menu.append(signout);
+  header.append(brand, menu);
+  return header;
+}
+
+function renderLayout(selected) {
+  const layout = element("div", "layout");
+  const sidebar = element("aside", "panel sidebar");
+  sidebar.append(renderToolbar(), renderCalendar(), renderActivityList());
+  const content = element("main", "panel content");
+  if (!selected) {
+    content.append(element("div", "empty", "表示できる活動がありません。"));
+  } else {
+    content.append(renderActivityDetail(selected));
+  }
+  layout.append(sidebar, content);
+  return layout;
+}
+
+function renderToolbar() {
+  const toolbar = element("div", "toolbar");
+  const stats = computeStats();
+  const statBox = element("div", "stats");
+  statBox.append(
+    renderStat(stats.upcoming, "今後の活動"),
+    renderStat(stats.unanswered, "未回答"),
+    renderStat(stats.shortage, "要見守り")
+  );
+
+  const filters = element("div", "segmented three");
+  [
+    ["all", "すべて"],
+    ["mine", "自分関連"],
+    ["shortage", "見守り不足"],
+  ].forEach(([key, label]) => {
+    const button = element("button", key === state.filter ? "active" : "", label);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      state.filter = key;
+      renderApp();
+    });
+    filters.append(button);
+  });
+
+  const views = element("div", "segmented");
+  [
+    ["list", "リスト"],
+    ["calendar", "カレンダー"],
+  ].forEach(([key, label]) => {
+    const button = element("button", key === state.view ? "active" : "", label);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      state.view = key;
+      renderApp();
+    });
+    views.append(button);
+  });
+
+  toolbar.append(statBox, filters, views);
+  if (state.isAdmin) {
+    const create = element("button", "button primary", "新規活動を追加");
+    create.type = "button";
+    create.addEventListener("click", () => {
+      state.selectedActivityId = "__new__";
+      renderApp();
+    });
+    toolbar.append(create);
+  }
+  return toolbar;
+}
+
+function renderStat(value, label) {
+  const node = element("div", "stat");
+  node.append(element("b", "", String(value)), element("span", "", label));
+  return node;
+}
+
+function renderCalendar() {
+  if (state.view !== "calendar") return document.createDocumentFragment();
+  const grid = element("div", "calendar-grid");
+  const activities = filteredActivities();
+  const first = activities[0] ? parseDate(activities[0].date) : new Date();
+  const year = first.getFullYear();
+  const month = first.getMonth();
+  const days = new Date(year, month + 1, 0).getDate();
+  const offset = new Date(year, month, 1).getDay();
+  for (let i = 0; i < offset; i += 1) grid.append(element("div", "calendar-day"));
+  for (let day = 1; day <= days; day += 1) {
+    const iso = `${year}-${pad(month + 1)}-${pad(day)}`;
+    const matches = activities.filter((activity) => activity.date === iso);
+    const cell = element("button", `calendar-day${matches.length ? " has-activity" : ""}`);
+    cell.type = "button";
+    cell.append(document.createTextNode(String(day)));
+    if (matches.length) {
+      cell.append(element("span", "dot"));
+      cell.title = `${matches.length}件の活動`;
+      cell.addEventListener("click", () => {
+        state.selectedActivityId = matches[0].id;
+        state.view = "list";
+        renderApp();
+      });
+    }
+    grid.append(cell);
+  }
+  return grid;
+}
+
+function renderActivityList() {
+  const list = element("div", "activity-list");
+  const activities = filteredActivities();
+  if (!activities.length) {
+    list.append(element("div", "empty", "条件に合う活動がありません。"));
+    return list;
+  }
+
+  activities.forEach((activity) => {
+    const shortage = watchShortage(activity);
+    const button = element("button", `activity-button${activity.id === state.selectedActivityId ? " active" : ""}`);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      state.selectedActivityId = activity.id;
+      renderApp();
+    });
+    const title = element("div", "activity-title");
+    title.append(element("strong", "", formatActivityTitle(activity)));
+    if (shortage.hasShortage) title.append(element("span", "attention-mark", "!"));
+    button.append(title);
+    button.append(element("div", "meta", "", [
+      element("span", "badge", activity.place || "場所未定"),
+      element("span", "badge", `${participantMembers(activity.id).length}名参加`),
+      shortage.hasShortage ? element("span", "badge danger", "見守り不足") : element("span", "badge ok", "見守りあり"),
+    ]));
+    list.append(button);
+  });
+  return list;
+}
+
+function renderActivityDetail(activity) {
+  const fragment = document.createDocumentFragment();
+  const shortage = watchShortage(activity);
+  const header = element("div", "detail-header");
+  const title = element("div");
+  title.append(element("h2", "", formatActivityTitle(activity)));
+  title.append(element("div", "meta", "", [
+    element("span", "badge", activity.place || "場所未定"),
+    element("span", "badge", `${activity.startTime || "--:--"} - ${activity.endTime || "--:--"}`),
+    shortage.hasShortage ? element("span", "badge danger", "見守り不足") : element("span", "badge ok", "見守り充足"),
+  ]));
+  const actions = element("div", "detail-actions");
+  if (activity.id !== "__new__") {
+    const addCalendar = element("a", "button primary", "Googleカレンダーに追加");
+    addCalendar.href = googleCalendarUrl(activity);
+    addCalendar.target = "_blank";
+    addCalendar.rel = "noreferrer";
+    actions.append(addCalendar);
+  }
+  header.append(title, actions);
+  fragment.append(header);
+
+  if (shortage.hasShortage) {
+    fragment.append(section("見守りアラート", element("div", "notice", shortage.message)));
+  }
+
+  fragment.append(section("見守り時間帯", renderCoverage(activity)));
+  fragment.append(section("参加者一覧", renderParticipants(activity)));
+  fragment.append(section("自分の回答", renderResponseForm(activity)));
+  fragment.append(section("引き継ぎ・連絡", renderComments(activity)));
+  if (state.isAdmin) fragment.append(section("管理者", renderAdminArea(activity)));
+  return fragment;
+}
+
+function renderCoverage(activity) {
+  const rows = element("div", "table-like");
+  const slots = coverageSlots(activity);
+  slots.forEach((slot) => {
+    const row = element("div", `coverage-row${slot.count < slot.required ? " short" : ""}`);
+    const bar = element("div", "coverage-bar");
+    const width = Math.min(100, Math.round((slot.count / Math.max(slot.required, 1)) * 100));
+    const fill = element("span");
+    fill.style.width = `${width}%`;
+    bar.append(fill);
+    row.append(
+      element("span", "", slot.label),
+      bar,
+      element("strong", "", `${slot.count}/${slot.required}`)
+    );
+    rows.append(row);
+  });
+  return rows;
+}
+
+function renderParticipants(activity) {
+  const wrap = element("div", "grid-two");
+  wrap.append(renderParticipantGroup("参加", participantMembers(activity.id)));
+  wrap.append(renderParticipantGroup("未回答・未定", unansweredMembers(activity.id)));
+  return wrap;
+}
+
+function renderParticipantGroup(title, members) {
+  const node = element("div", "table-like");
+  node.append(element("h3", "", title));
+  if (!members.length) {
+    node.append(element("p", "muted", "該当なし"));
+    return node;
+  }
+  members.forEach((member) => {
+    const row = element("div", "person-row");
+    row.append(element("span", "", member.displayName || member.playerName), element("span", "badge", member.grade || ""));
+    node.append(row);
+  });
+  return node;
+}
+
+function renderResponseForm(activity) {
+  const wrap = element("form");
+  const linkedMembers = state.members.filter((member) => state.linkedMemberIds.includes(member.id));
+  if (!linkedMembers.length && !state.isAdmin) {
+    wrap.append(element("div", "notice", "このGoogleアカウントに紐づく選手がありません。管理者に登録を依頼してください。"));
+    return wrap;
+  }
+
+  const memberSelect = element("select");
+  linkedMembers.forEach((member) => {
+    const option = element("option", "", member.displayName || member.playerName);
+    option.value = member.id;
+    memberSelect.append(option);
+  });
+  const firstMember = linkedMembers[0] || state.members[0];
+  memberSelect.value = firstMember?.id || "";
+
+  const attendance = element("select");
+  ["参加", "欠席", "未回答", "未定"].forEach((status) => {
+    const option = element("option", "", status);
+    option.value = status;
+    attendance.append(option);
+  });
+
+  const canOpen = checkbox("鍵開けできます");
+  const canClose = checkbox("鍵閉めできます");
+  const canWatch = checkbox("見守りできます");
+  const watchStart = timeInput(activity.startTime || "09:00");
+  const watchEnd = timeInput(activity.endTime || "12:00");
+  const comment = element("textarea");
+  comment.placeholder = "遅刻、早退、引率、共有したいこと";
+
+  const applyExisting = () => {
+    const existing = responseFor(activity.id, memberSelect.value);
+    attendance.value = existing?.attendanceStatus || "未回答";
+    canOpen.input.checked = existing?.canOpen === "true";
+    canClose.input.checked = existing?.canClose === "true";
+    canWatch.input.checked = existing?.canWatch === "true";
+    watchStart.value = existing?.watchStartTime || activity.startTime || "";
+    watchEnd.value = existing?.watchEndTime || activity.endTime || "";
+    comment.value = existing?.comment || "";
+  };
+  memberSelect.addEventListener("change", applyExisting);
+  applyExisting();
+
+  const grid = element("div", "form-grid");
+  grid.append(labelWrap("選手", memberSelect), labelWrap("出欠", attendance));
+  const checks = element("div", "check-row");
+  checks.append(canOpen.label, canClose.label, canWatch.label);
+  const times = element("div", "form-grid");
+  times.append(labelWrap("見守り開始", watchStart), labelWrap("見守り終了", watchEnd));
+  const submit = element("button", "button primary", "回答を保存");
+  submit.type = "submit";
+
+  wrap.append(grid, checks, times, labelWrap("コメント", comment), submit);
+  wrap.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    submit.textContent = "保存中";
+    try {
+      await apiPost("/api/responses", {
+        activityId: activity.id,
+        memberId: memberSelect.value,
+        attendanceStatus: attendance.value,
+        canOpen: canOpen.input.checked,
+        canClose: canClose.input.checked,
+        canWatch: canWatch.input.checked,
+        watchStartTime: watchStart.value,
+        watchEndTime: watchEnd.value,
+        comment: comment.value,
+      });
+      await loadBootstrap();
+    } catch (error) {
+      wrap.prepend(element("div", "error", error.message));
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "回答を保存";
+    }
+  });
+  return wrap;
+}
+
+function renderComments(activity) {
+  const wrap = element("div", "table-like");
+  if (activity.handoverNote) wrap.append(element("div", "notice", activity.handoverNote));
+  const comments = state.comments.filter((comment) => comment.activityId === activity.id);
+  comments.forEach((comment) => {
+    const row = element("div", "person-row");
+    row.append(element("span", "", `${comment.displayName}: ${comment.body}`), element("span", "muted small", formatDateTime(comment.createdAt)));
+    wrap.append(row);
+  });
+  const form = element("form", "form-grid");
+  const body = element("input");
+  body.placeholder = "活動について共有する";
+  const submit = element("button", "button", "投稿");
+  submit.type = "submit";
+  form.append(labelWrap("連絡", body), submit);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!body.value.trim()) return;
+    submit.disabled = true;
+    try {
+      await apiPost("/api/comments", { activityId: activity.id, body: body.value });
+      await loadBootstrap();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  wrap.append(form);
+  return wrap;
+}
+
+function renderAdminArea(activity) {
+  const area = element("div", "admin-area");
+  const form = element("form", "form-grid");
+  const date = input("date", activity.date || "");
+  const start = timeInput(activity.startTime || "");
+  const end = timeInput(activity.endTime || "");
+  const place = input("text", activity.place || "");
+  const note = element("textarea");
+  note.value = activity.handoverNote || "";
+  const status = element("select");
+  ["公開", "下書き", "中止"].forEach((value) => {
+    const option = element("option", "", value);
+    option.value = value;
+    status.append(option);
+  });
+  status.value = activity.status || "公開";
+  const submit = element("button", "button primary", "活動を保存");
+  submit.type = "submit";
+  form.append(
+    labelWrap("日付", date),
+    labelWrap("開始", start),
+    labelWrap("終了", end),
+    labelWrap("場所", place),
+    labelWrap("状態", status),
+    labelWrap("引き継ぎ", note),
+    submit
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {
+      await apiPost("/api/activities", {
+        id: activity.id === "__new__" ? "" : activity.id,
+        date: date.value,
+        startTime: start.value,
+        endTime: end.value,
+        place: place.value,
+        handoverNote: note.value,
+        status: status.value,
+      });
+      await loadBootstrap();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form, renderMemberAdminForm());
+  return area;
+}
+
+function renderMemberAdminForm() {
+  const form = element("form", "form-grid");
+  const playerName = input("text", "");
+  const grade = input("text", "");
+  const familyName = input("text", "");
+  const displayName = input("text", "");
+  const parentEmails = input("text", "");
+  const calendarEmail = input("email", "");
+  playerName.placeholder = "例: 山田 太郎";
+  grade.placeholder = "例: 小6";
+  familyName.placeholder = "例: 山田";
+  displayName.placeholder = "例: 太郎";
+  parentEmails.placeholder = "parent@example.com";
+  calendarEmail.placeholder = "任意";
+  const submit = element("button", "button", "メンバーを追加");
+  submit.type = "submit";
+  form.append(
+    element("h3", "", "メンバー追加"),
+    labelWrap("選手名", playerName),
+    labelWrap("学年", grade),
+    labelWrap("家庭名", familyName),
+    labelWrap("表示名", displayName),
+    labelWrap("保護者Googleメール", parentEmails),
+    labelWrap("カレンダー用メール", calendarEmail),
+    submit
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {
+      await apiPost("/api/members", {
+        playerName: playerName.value,
+        grade: grade.value,
+        familyName: familyName.value,
+        displayName: displayName.value || playerName.value,
+        parentEmails: parentEmails.value,
+        calendarEmail: calendarEmail.value,
+        active: true,
+      });
+      await loadBootstrap();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  return form;
+}
+
+function selectedActivity() {
+  if (state.selectedActivityId === "__new__") {
+    return {
+      id: "__new__",
+      date: new Date().toISOString().slice(0, 10),
+      startTime: "09:00",
+      endTime: "12:00",
+      place: "",
+      handoverNote: "",
+      status: "公開",
+      requiredAdults: "1",
+      watchTimeUnitMinutes: "30",
+    };
+  }
+  return state.activities.find((activity) => activity.id === state.selectedActivityId) || state.activities[0];
+}
+
+function filteredActivities() {
+  return state.activities.filter((activity) => {
+    if (state.filter === "shortage") return watchShortage(activity).hasShortage;
+    if (state.filter === "mine") {
+      return state.responses.some((response) => response.activityId === activity.id && state.linkedMemberIds.includes(response.memberId));
+    }
+    return true;
+  });
+}
+
+function computeStats() {
+  const upcoming = state.activities.length;
+  const unanswered = state.activities.reduce((count, activity) => count + unansweredMembers(activity.id).length, 0);
+  const shortage = state.activities.filter((activity) => watchShortage(activity).hasShortage).length;
+  return { upcoming, unanswered, shortage };
+}
+
+function participantMembers(activityId) {
+  const ids = new Set(state.responses.filter((response) => response.activityId === activityId && response.attendanceStatus === "参加").map((response) => response.memberId));
+  return state.members.filter((member) => ids.has(member.id));
+}
+
+function unansweredMembers(activityId) {
+  const answered = new Map(state.responses.filter((response) => response.activityId === activityId).map((response) => [response.memberId, response.attendanceStatus]));
+  return state.members.filter((member) => !answered.has(member.id) || ["未回答", "未定"].includes(answered.get(member.id)));
+}
+
+function responseFor(activityId, memberId) {
+  return state.responses.find((response) => response.activityId === activityId && response.memberId === memberId);
+}
+
+function watchResponses(activityId) {
+  return state.responses.filter((response) => response.activityId === activityId);
+}
+
+function watchShortage(activity) {
+  const slots = coverageSlots(activity);
+  const hasOpen = watchResponses(activity.id).some((response) => response.canOpen === "true");
+  const hasClose = watchResponses(activity.id).some((response) => response.canClose === "true");
+  const shortSlots = slots.filter((slot) => slot.count < slot.required);
+  if (!hasOpen) return { hasShortage: true, message: "鍵開け担当がまだいません。" };
+  if (!hasClose) return { hasShortage: true, message: "鍵閉め担当がまだいません。" };
+  if (shortSlots.length) return { hasShortage: true, message: "見守りの大人が足りない時間帯があります。" };
+  return { hasShortage: false, message: "" };
+}
+
+function coverageSlots(activity) {
+  const start = minutes(activity.startTime || "09:00");
+  const end = minutes(activity.endTime || "12:00");
+  const step = Number(activity.watchTimeUnitMinutes || 30);
+  const required = Number(activity.requiredAdults || 1);
+  const slots = [];
+  for (let cursor = start; cursor < end; cursor += step) {
+    const next = Math.min(cursor + step, end);
+    const count = watchResponses(activity.id).filter((response) => {
+      if (response.canWatch !== "true") return false;
+      const watchStart = minutes(response.watchStartTime || activity.startTime || "00:00");
+      const watchEnd = minutes(response.watchEndTime || activity.endTime || "00:00");
+      return watchStart <= cursor && watchEnd >= next;
+    }).length;
+    slots.push({ label: `${toTime(cursor)}-${toTime(next)}`, count, required });
+  }
+  return slots;
+}
+
+function googleCalendarUrl(activity) {
+  const start = calendarDateTime(activity.date, activity.startTime);
+  const end = calendarDateTime(activity.date, activity.endTime);
+  const details = [
+    "RED BISONS 活動",
+    activity.handoverNote || "",
+    "アプリで参加者と見守り状況を確認してください。",
+  ].filter(Boolean).join("\n");
+  const url = new URL("https://calendar.google.com/calendar/render");
+  url.searchParams.set("action", "TEMPLATE");
+  url.searchParams.set("text", `RED BISONS ${activity.place || "活動"}`);
+  url.searchParams.set("dates", `${start}/${end}`);
+  url.searchParams.set("location", activity.place || "");
+  url.searchParams.set("details", details);
+  return url.toString();
+}
+
+function formatActivityTitle(activity) {
+  return `${formatDate(activity.date)} ${activity.startTime || ""}`;
+}
+
+function formatDate(value) {
+  if (!value) return "日付未定";
+  const date = parseDate(value);
+  return `${date.getMonth() + 1}月${date.getDate()}日(${["日", "月", "火", "水", "木", "金", "土"][date.getDay()]})`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function calendarDateTime(date, time) {
+  return `${date.replaceAll("-", "")}T${(time || "00:00").replace(":", "")}00`;
+}
+
+function parseDate(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function minutes(value) {
+  const [hour, minute] = String(value || "00:00").split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function toTime(value) {
+  return `${pad(Math.floor(value / 60))}:${pad(value % 60)}`;
+}
+
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+
+function section(title, body) {
+  const node = element("section", "section");
+  node.append(element("h3", "", title), body);
+  return node;
+}
+
+function labelWrap(text, control) {
+  const label = element("label");
+  label.append(element("span", "", text), control);
+  return label;
+}
+
+function checkbox(text) {
+  const inputNode = element("input");
+  inputNode.type = "checkbox";
+  const labelNode = element("label");
+  labelNode.append(inputNode, document.createTextNode(text));
+  return { input: inputNode, label: labelNode };
+}
+
+function input(type, value) {
+  const node = element("input");
+  node.type = type;
+  node.value = value;
+  return node;
+}
+
+function timeInput(value) {
+  const node = input("time", value || "");
+  node.step = "300";
+  return node;
+}
+
+function element(tag, className = "", text = "", children = []) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  children.forEach((child) => node.append(child));
+  return node;
+}
+
+function renderFatal(message) {
+  app.innerHTML = "";
+  app.append(element("main", "login-screen", "", [
+    element("h1", "", "RED BISONS 活動管理"),
+    element("div", "error", message),
+  ]));
+}
