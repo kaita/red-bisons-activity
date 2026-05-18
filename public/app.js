@@ -423,6 +423,8 @@ function renderNewActivityPage(activity) {
 }
 
 function renderActivityDetail(activity) {
+  if (isAdminMode()) return renderAdminActivityDetail(activity);
+
   const fragment = document.createDocumentFragment();
   const shortage = watchShortage(activity);
   const header = element("div", "detail-header");
@@ -453,7 +455,22 @@ function renderActivityDetail(activity) {
   fragment.append(section("参加者一覧", renderParticipants(activity)));
   fragment.append(section("自分の回答", renderResponseForm(activity)));
   fragment.append(section("引き継ぎ・連絡", renderComments(activity)));
-  if (isAdminMode()) fragment.append(section("管理者", renderAdminArea(activity)));
+  return fragment;
+}
+
+function renderAdminActivityDetail(activity) {
+  const fragment = document.createDocumentFragment();
+  const header = element("div", "detail-header");
+  const title = element("div");
+  title.append(
+    element("h2", "", "予定編集"),
+    element("div", "meta", "", [
+      element("span", "badge", formatActivityTitle(activity)),
+      element("span", "badge", activity.status || "公開"),
+    ])
+  );
+  header.append(title);
+  fragment.append(header, section("日程", renderAdminArea(activity, { title: "", includeMembers: false })));
   return fragment;
 }
 
