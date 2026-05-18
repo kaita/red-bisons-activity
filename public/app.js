@@ -701,27 +701,17 @@ function renderAdminArea(activity, options = {}) {
   submit.type = "submit";
   const actions = element("div", "form-actions");
   actions.append(submit);
-  const timeGroup = element("div", "time-group");
-  timeGroup.append(
-    element("span", "field-label", "時間"),
-    element("div", "time-range-controls", "", [
-      labelWrap("開始", start),
-      element("span", "time-separator", "〜"),
-      labelWrap("終了", end),
-    ])
-  );
   const noteField = labelWrap("引き継ぎ", note);
   noteField.classList.add("form-full");
   form.append(
     element("div", "form-row schedule-row", "", [
       labelWrap("日付", date),
-      timeGroup,
-      labelWrap("状態", status),
-    ]),
-    element("div", "form-row place-row", "", [
       labelWrap("場所", place),
+      labelWrap("開始", start),
+      labelWrap("終了", end),
     ]),
     element("div", "form-row watch-config-row", "", [
+      labelWrap("状態", status),
       labelWrap("必要な見守り人数", requiredAdults),
       labelWrap("見守り単位(分)", watchTimeUnitMinutes),
     ]),
