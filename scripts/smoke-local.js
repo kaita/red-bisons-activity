@@ -78,12 +78,16 @@ try {
     startTime: "09:00",
     endTime: "12:00",
     place: "北小",
+    handoverNote: "持ち物確認",
     status: "公開",
     requiredAdults: "2",
     watchTimeUnitMinutes: "30",
   });
   assert(activityWrite.response.ok, "admin should create activities");
   assert(activityWrite.data.activity.id, "created activity should include id");
+  assert(activityWrite.data.activity.handoverUpdatedByName === "デモ管理者", "handover writer should be tracked");
+  assert(activityWrite.data.activity.handoverUpdatedAt, "handover update time should be tracked");
+  assert(!Object.hasOwn(activityWrite.data.activity, "handoverUpdatedByEmail"), "handover writer email should not be exposed");
 
   const memberWrite = await api("POST", "/api/members", "demo-admin-token", {
     playerName: "山田 太郎",

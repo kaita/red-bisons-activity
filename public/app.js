@@ -646,7 +646,7 @@ function renderResponseForm(activity) {
 
 function renderComments(activity) {
   const wrap = element("div", "table-like");
-  if (activity.handoverNote) wrap.append(element("div", "notice", activity.handoverNote));
+  if (activity.handoverNote) wrap.append(renderHandoverNotice(activity));
   const comments = state.comments.filter((comment) => comment.activityId === activity.id);
   comments.forEach((comment) => {
     const row = element("div", "person-row");
@@ -678,6 +678,14 @@ function renderComments(activity) {
   });
   wrap.append(form);
   return wrap;
+}
+
+function renderHandoverNotice(activity) {
+  const notice = element("div", "notice handover-notice");
+  notice.append(element("div", "", activity.handoverNote));
+  const metaText = handoverMetaText(activity);
+  if (metaText) notice.append(element("div", "field-note", metaText));
+  return notice;
 }
 
 async function recoverMissingActivity(error) {
@@ -720,6 +728,8 @@ function renderAdminArea(activity, options = {}) {
   actions.append(submit);
   const noteField = labelWrap("引き継ぎ", note);
   noteField.classList.add("form-full");
+  const handoverMeta = handoverMetaText(activity);
+  if (handoverMeta) noteField.append(element("span", "field-note", handoverMeta));
   form.append(
     element("div", "form-row schedule-row", "", [
       labelWrap("日付", date),
@@ -972,6 +982,13 @@ function formatDate(value) {
 function formatDateTime(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function handoverMetaText(activity) {
+  if (!activity.handoverNote) return "";
+  const updatedBy = activity.handoverUpdatedByName || "未記録";
+  const updatedAt = formatDateTime(activity.handoverUpdatedAt);
+  return `最終更新: ${updatedBy}${updatedAt ? ` / ${updatedAt}` : ""}`;
 }
 
 function calendarDateTime(date, time) {

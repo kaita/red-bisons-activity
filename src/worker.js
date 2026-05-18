@@ -13,6 +13,9 @@ const TABLES = {
     "calendarEventId",
     "calendarSyncStatus",
     "updatedAt",
+    "handoverUpdatedByEmail",
+    "handoverUpdatedByName",
+    "handoverUpdatedAt",
   ],
   Responses: [
     "activityId",
@@ -113,7 +116,7 @@ async function handleApi(request, env, url) {
     requireAdmin(user, env);
     const payload = await readJson(request);
     const data = await readAllData(env, { includeInactive: true, includeDrafts: true });
-    const activity = await upsertActivity(payload, data, env);
+    const activity = await upsertActivity(payload, data, env, user);
     return json({ ok: true, activity }, 200, request, env);
   }
 
@@ -193,7 +196,7 @@ async function handleDemoApi(request, env, url) {
   if (url.pathname === "/api/activities" && request.method === "POST") {
     requireAdmin(user, env);
     const payload = await readJson(request);
-    const activity = await upsertDemoActivity(payload, data);
+    const activity = await upsertDemoActivity(payload, data, user);
     return json({ ok: true, activity: sanitizeActivity(activity) }, 200, request, env);
   }
 
@@ -389,21 +392,24 @@ async function appendActivityComment(payload, context, data, env) {
   return sanitizeComment(comment);
 }
 
-async function upsertActivity(payload, data, env) {
+async function upsertActivity(payload, data, env, user) {
   const existing = data.activities.find((item) => item.id === clean(payload.id));
+  const now = new Date().toISOString();
+  const handoverNote = clean(payload.handoverNote).slice(0, 1200);
   const activity = {
     id: existing?.id || clean(payload.id) || id("activity"),
     date: validateDate(payload.date),
     startTime: validateTime(payload.startTime, "開始時刻"),
     endTime: validateTime(payload.endTime, "終了時刻"),
     place: clean(payload.place).slice(0, 120),
-    handoverNote: clean(payload.handoverNote).slice(0, 1200),
+    handoverNote,
     status: ACTIVITY_STATUSES.has(clean(payload.status)) ? clean(payload.status) : "公開",
     requiredAdults: String(clampInt(payload.requiredAdults || existing?.requiredAdults || 1, 1, 20)),
     watchTimeUnitMinutes: String(clampInt(payload.watchTimeUnitMinutes || existing?.watchTimeUnitMinutes || 30, 5, 120)),
     calendarEventId: existing?.calendarEventId || "",
     calendarSyncStatus: "未同期",
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
+    ...handoverAuditFields(existing, handoverNote, user, now),
   };
   if (toMinutes(activity.endTime) <= toMinutes(activity.startTime)) {
     throw new HttpError(400, "終了時刻は開始時刻より後にしてください。");
@@ -421,6 +427,28 @@ async function upsertActivity(payload, data, env) {
     await appendTableRow(env, "Activities", activity);
   }
   return sanitizeActivity(activity);
+}
+
+function handoverAuditFields(existing, handoverNote, user, now) {
+  if (!handoverNote) {
+    return {
+      handoverUpdatedByEmail: "",
+      handoverUpdatedByName: "",
+      handoverUpdatedAt: "",
+    };
+  }
+  if (existing && clean(existing.handoverNote) === handoverNote) {
+    return {
+      handoverUpdatedByEmail: existing.handoverUpdatedByEmail || "",
+      handoverUpdatedByName: existing.handoverUpdatedByName || "",
+      handoverUpdatedAt: existing.handoverUpdatedAt || "",
+    };
+  }
+  return {
+    handoverUpdatedByEmail: user.email,
+    handoverUpdatedByName: user.name || user.email,
+    handoverUpdatedAt: now,
+  };
 }
 
 async function upsertMember(payload, data, env) {
@@ -450,21 +478,24 @@ async function upsertMember(payload, data, env) {
   return member;
 }
 
-async function upsertDemoActivity(payload, data) {
+async function upsertDemoActivity(payload, data, user) {
   const existing = data.activities.find((item) => item.id === clean(payload.id));
+  const now = new Date().toISOString();
+  const handoverNote = clean(payload.handoverNote).slice(0, 1200);
   const activity = {
     id: existing?.id || clean(payload.id) || id("activity"),
     date: validateDate(payload.date),
     startTime: validateTime(payload.startTime, "開始時刻"),
     endTime: validateTime(payload.endTime, "終了時刻"),
     place: clean(payload.place).slice(0, 120),
-    handoverNote: clean(payload.handoverNote).slice(0, 1200),
+    handoverNote,
     status: ACTIVITY_STATUSES.has(clean(payload.status)) ? clean(payload.status) : "公開",
     requiredAdults: String(clampInt(payload.requiredAdults || existing?.requiredAdults || 1, 1, 20)),
     watchTimeUnitMinutes: String(clampInt(payload.watchTimeUnitMinutes || existing?.watchTimeUnitMinutes || 30, 5, 120)),
     calendarEventId: existing?.calendarEventId || "",
     calendarSyncStatus: "デモ",
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
+    ...handoverAuditFields(existing, handoverNote, user, now),
   };
   if (toMinutes(activity.endTime) <= toMinutes(activity.startTime)) {
     throw new HttpError(400, "終了時刻は開始時刻より後にしてください。");
@@ -575,12 +606,20 @@ async function readRawTable(env, sheetName) {
   );
   const values = data.values || [];
   if (values.length === 0) return { headers, objects: [], startRow: 2 };
-  const actualHeaders = values[0].length ? values[0] : headers;
+  const actualHeaders = values[0].length ? mergeHeaders(values[0], headers) : headers;
   const objects = values
     .slice(1)
     .filter((row) => row.some((cell) => clean(cell)))
     .map((row) => rowToObject(actualHeaders, row));
   return { headers: actualHeaders, objects, startRow: 2 };
+}
+
+function mergeHeaders(actualHeaders, expectedHeaders) {
+  const merged = [...actualHeaders];
+  expectedHeaders.forEach((header) => {
+    if (!merged.includes(header)) merged.push(header);
+  });
+  return merged;
 }
 
 async function appendTableRow(env, sheetName, object) {
@@ -742,6 +781,8 @@ function sanitizeActivity(activity) {
     requiredAdults: activity.requiredAdults || "1",
     watchTimeUnitMinutes: activity.watchTimeUnitMinutes || "30",
     calendarSyncStatus: activity.calendarSyncStatus || "",
+    handoverUpdatedByName: activity.handoverUpdatedByName || "",
+    handoverUpdatedAt: activity.handoverUpdatedAt || "",
   };
 }
 
@@ -772,6 +813,7 @@ function sanitizeComment(comment) {
 
 function getDemoData() {
   if (demoData) return demoData;
+  const demoNow = new Date().toISOString();
   demoData = {
     members: [
       {
@@ -817,7 +859,10 @@ function getDemoData() {
         requiredAdults: "2",
         watchTimeUnitMinutes: "30",
         calendarSyncStatus: "デモ",
-        updatedAt: new Date().toISOString(),
+        updatedAt: demoNow,
+        handoverUpdatedByEmail: "demo.admin@example.com",
+        handoverUpdatedByName: "デモ管理者",
+        handoverUpdatedAt: demoNow,
       },
       {
         id: "activity_2026_06_07",
@@ -830,7 +875,10 @@ function getDemoData() {
         requiredAdults: "1",
         watchTimeUnitMinutes: "30",
         calendarSyncStatus: "デモ",
-        updatedAt: new Date().toISOString(),
+        updatedAt: demoNow,
+        handoverUpdatedByEmail: "demo.admin@example.com",
+        handoverUpdatedByName: "デモ管理者",
+        handoverUpdatedAt: demoNow,
       },
       {
         id: "activity_2026_06_14",
@@ -843,7 +891,10 @@ function getDemoData() {
         requiredAdults: "1",
         watchTimeUnitMinutes: "30",
         calendarSyncStatus: "デモ",
-        updatedAt: new Date().toISOString(),
+        updatedAt: demoNow,
+        handoverUpdatedByEmail: "demo.admin@example.com",
+        handoverUpdatedByName: "デモ管理者",
+        handoverUpdatedAt: demoNow,
       },
     ],
     responses: [

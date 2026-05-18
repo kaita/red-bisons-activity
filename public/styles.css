@@ -644,6 +644,17 @@ textarea {
   color: #7c2d12;
 }
 
+.handover-notice {
+  display: grid;
+  gap: 8px;
+}
+
+.field-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 550;
+}
+
 .app-message {
   margin: 16px 16px 0;
 }
