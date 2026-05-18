@@ -79,6 +79,8 @@ wrangler secret put ALLOWED_ORIGINS
 npm run deploy
 ```
 
+本番公開前にCloudflareとGoogle CloudのBudget alertを設定してください。手順は [docs/billing-monitoring.md](docs/billing-monitoring.md) にまとめています。
+
 ## Raspberry Piでの暫定運用
 
 自宅のRaspberry Piは、本番サーバーの第一候補ではなく、検証・暫定デモ・退避先として使えます。Node.jsサーバーとDocker構成を用意しています。

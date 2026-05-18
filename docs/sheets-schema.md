@@ -31,6 +31,9 @@
 | calendarEventId | 共有Googleカレンダー予定ID |
 | calendarSyncStatus | 同期状態 |
 | updatedAt | ISO日時 |
+| handoverUpdatedByEmail | 引き継ぎを最後に更新した管理者メール。画面/APIには表示しない |
+| handoverUpdatedByName | 引き継ぎを最後に更新した管理者表示名 |
+| handoverUpdatedAt | 引き継ぎを最後に更新したISO日時 |
 
 ## Responses
 
@@ -59,4 +62,3 @@
 | body | コメント本文 |
 | createdAt | ISO日時 |
 | updatedAt | ISO日時 |
-
