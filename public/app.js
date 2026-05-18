@@ -653,7 +653,7 @@ function renderComments(activity) {
     row.append(element("span", "", `${comment.displayName}: ${comment.body}`), element("span", "muted small", formatDateTime(comment.createdAt)));
     wrap.append(row);
   });
-  const form = element("form", "form-grid");
+  const form = element("form", "comment-form");
   const body = element("input");
   body.placeholder = "活動について共有する";
   const submit = element("button", "button", "投稿");

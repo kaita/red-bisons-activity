@@ -655,6 +655,26 @@ textarea {
   font-weight: 550;
 }
 
+.comment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.comment-form label {
+  min-width: 0;
+}
+
+.comment-form .button {
+  min-width: 72px;
+  padding-inline: 14px;
+}
+
+.comment-form .error {
+  grid-column: 1 / -1;
+}
+
 .app-message {
   margin: 16px 16px 0;
 }
