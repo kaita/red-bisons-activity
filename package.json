@@ -7,7 +7,10 @@
   "scripts": {
     "check": "node --check src/worker.js && node --check src/server.js && node --check public/app.js",
     "dev": "wrangler dev",
+    "dev:cloudflare": "wrangler dev",
+    "dev:node": "node src/server.js",
     "deploy": "wrangler deploy",
+    "smoke:local": "node scripts/smoke-local.js",
     "start": "node src/server.js"
   },
   "devDependencies": {
