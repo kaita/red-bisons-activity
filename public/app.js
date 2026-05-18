@@ -656,7 +656,7 @@ function renderComments(activity) {
   const form = element("form", "comment-form");
   const body = element("input");
   body.placeholder = "活動について共有する";
-  const submit = element("button", "button", "投稿");
+  const submit = element("button", "button primary", "投稿");
   submit.type = "submit";
   form.append(labelWrap("連絡", body), submit);
   form.addEventListener("submit", async (event) => {
