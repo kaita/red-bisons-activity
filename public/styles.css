@@ -79,6 +79,13 @@ a.button:focus-visible,
   height: 84px;
 }
 
+.login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -452,7 +459,7 @@ a.button:focus-visible,
 
 .grid-two {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -525,6 +532,11 @@ textarea {
   padding: 9px 10px;
 }
 
+input:disabled {
+  background: #f3f4f6;
+  color: var(--muted);
+}
+
 textarea {
   min-height: 84px;
   resize: vertical;
@@ -587,6 +599,17 @@ textarea {
 .admin-area {
   display: grid;
   gap: 14px;
+}
+
+.admin-area .form-grid {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.admin-area .admin-area {
+  gap: 10px;
 }
 
 @media (max-width: 900px) {

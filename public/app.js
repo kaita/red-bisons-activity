@@ -65,11 +65,14 @@ function setupGoogleSignIn() {
   }, 80);
 }
 
-async function loadBootstrap() {
+async function loadBootstrap(options = {}) {
   try {
+    const previousSelectedActivityId = options.selectedActivityId || state.selectedActivityId;
     const data = await apiGet("/api/bootstrap");
     Object.assign(state, data);
-    state.selectedActivityId = state.activities[0]?.id || "";
+    state.selectedActivityId = state.activities.some((activity) => activity.id === previousSelectedActivityId)
+      ? previousSelectedActivityId
+      : state.activities[0]?.id || "";
     renderApp();
   } catch (error) {
     localStorage.removeItem("redBisonsToken");
@@ -133,7 +136,15 @@ function renderLogin(errorMessage = "") {
       localStorage.setItem("redBisonsToken", state.token);
       await loadBootstrap();
     });
-    main.append(demoButton, element("p", "muted small", "ローカル限定のサンプルデータで画面を確認します。"));
+    const adminDemoButton = element("button", "button", "管理者デモで見る");
+    adminDemoButton.type = "button";
+    adminDemoButton.addEventListener("click", async () => {
+      state.token = "demo-admin-token";
+      localStorage.setItem("redBisonsToken", state.token);
+      await loadBootstrap();
+    });
+    const demoActions = element("div", "login-actions", "", [demoButton, adminDemoButton]);
+    main.append(demoActions, element("p", "muted small", "ローカル限定のサンプルデータで画面を確認します。"));
   } else {
     main.append(element("p", "muted small", "登録済みの保護者・管理者アカウントのみ利用できます。"));
   }
@@ -165,6 +176,7 @@ function renderTopbar() {
     menu.append(picture);
   }
   menu.append(element("span", "user-name", state.user?.name || state.user?.email || ""));
+  if (state.isAdmin) menu.append(element("span", "badge", "管理者"));
   const signout = element("button", "button ghost", "ログアウト");
   signout.type = "button";
   signout.addEventListener("click", () => {
@@ -234,6 +246,13 @@ function renderToolbar() {
   });
 
   toolbar.append(statBox, filters, views);
+  if (state.config?.calendarSubscribeUrl) {
+    const calendar = element("a", "button ghost", "共有カレンダーを開く");
+    calendar.href = state.config.calendarSubscribeUrl;
+    calendar.target = "_blank";
+    calendar.rel = "noreferrer";
+    toolbar.append(calendar);
+  }
   if (state.isAdmin) {
     const create = element("button", "button primary", "新規活動を追加");
     create.type = "button";
@@ -357,10 +376,16 @@ function renderActivityDetail(activity) {
   header.append(title, actions);
   fragment.append(header);
 
+  if (activity.id === "__new__") {
+    if (state.isAdmin) fragment.append(section("管理者", renderAdminArea(activity)));
+    return fragment;
+  }
+
   if (shortage.hasShortage) {
     fragment.append(section("見守りアラート", element("div", "notice", shortage.message)));
   }
 
+  fragment.append(section("当番担当", renderDutyAssignments(activity)));
   fragment.append(section("見守り時間帯", renderCoverage(activity)));
   fragment.append(section("参加者一覧", renderParticipants(activity)));
   fragment.append(section("自分の回答", renderResponseForm(activity)));
@@ -389,9 +414,35 @@ function renderCoverage(activity) {
   return rows;
 }
 
+function renderDutyAssignments(activity) {
+  const wrap = element("div", "grid-two");
+  wrap.append(
+    renderDutyGroup("鍵開け", dutyMembers(activity.id, "canOpen")),
+    renderDutyGroup("鍵閉め", dutyMembers(activity.id, "canClose")),
+    renderDutyGroup("見守り", watchDutyRows(activity.id))
+  );
+  return wrap;
+}
+
+function renderDutyGroup(title, rows) {
+  const node = element("div", "table-like");
+  node.append(element("h3", "", title));
+  if (!rows.length) {
+    node.append(element("p", "muted", "未定"));
+    return node;
+  }
+  rows.forEach((rowText) => {
+    const row = element("div", "person-row");
+    row.append(element("span", "", rowText));
+    node.append(row);
+  });
+  return node;
+}
+
 function renderParticipants(activity) {
   const wrap = element("div", "grid-two");
   wrap.append(renderParticipantGroup("参加", participantMembers(activity.id)));
+  wrap.append(renderParticipantGroup("欠席", absentMembers(activity.id)));
   wrap.append(renderParticipantGroup("未回答・未定", unansweredMembers(activity.id)));
   return wrap;
 }
@@ -414,18 +465,19 @@ function renderParticipantGroup(title, members) {
 function renderResponseForm(activity) {
   const wrap = element("form");
   const linkedMembers = state.members.filter((member) => state.linkedMemberIds.includes(member.id));
+  const memberOptions = state.isAdmin ? state.members.filter((member) => member.active !== false) : linkedMembers;
   if (!linkedMembers.length && !state.isAdmin) {
     wrap.append(element("div", "notice", "このGoogleアカウントに紐づく選手がありません。管理者に登録を依頼してください。"));
     return wrap;
   }
 
   const memberSelect = element("select");
-  linkedMembers.forEach((member) => {
+  memberOptions.forEach((member) => {
     const option = element("option", "", member.displayName || member.playerName);
     option.value = member.id;
     memberSelect.append(option);
   });
-  const firstMember = linkedMembers[0] || state.members[0];
+  const firstMember = memberOptions[0];
   memberSelect.value = firstMember?.id || "";
 
   const attendance = element("select");
@@ -440,9 +492,17 @@ function renderResponseForm(activity) {
   const canWatch = checkbox("見守りできます");
   const watchStart = timeInput(activity.startTime || "09:00");
   const watchEnd = timeInput(activity.endTime || "12:00");
+  watchStart.min = activity.startTime || "";
+  watchStart.max = activity.endTime || "";
+  watchEnd.min = activity.startTime || "";
+  watchEnd.max = activity.endTime || "";
   const comment = element("textarea");
   comment.placeholder = "遅刻、早退、引率、共有したいこと";
 
+  const syncWatchInputs = () => {
+    watchStart.disabled = !canWatch.input.checked;
+    watchEnd.disabled = !canWatch.input.checked;
+  };
   const applyExisting = () => {
     const existing = responseFor(activity.id, memberSelect.value);
     attendance.value = existing?.attendanceStatus || "未回答";
@@ -452,8 +512,10 @@ function renderResponseForm(activity) {
     watchStart.value = existing?.watchStartTime || activity.startTime || "";
     watchEnd.value = existing?.watchEndTime || activity.endTime || "";
     comment.value = existing?.comment || "";
+    syncWatchInputs();
   };
   memberSelect.addEventListener("change", applyExisting);
+  canWatch.input.addEventListener("change", syncWatchInputs);
   applyExisting();
 
   const grid = element("div", "form-grid");
@@ -478,11 +540,11 @@ function renderResponseForm(activity) {
         canOpen: canOpen.input.checked,
         canClose: canClose.input.checked,
         canWatch: canWatch.input.checked,
-        watchStartTime: watchStart.value,
-        watchEndTime: watchEnd.value,
+        watchStartTime: canWatch.input.checked ? watchStart.value : "",
+        watchEndTime: canWatch.input.checked ? watchEnd.value : "",
         comment: comment.value,
       });
-      await loadBootstrap();
+      await loadBootstrap({ selectedActivityId: activity.id });
     } catch (error) {
       wrap.prepend(element("div", "error", error.message));
     } finally {
@@ -514,7 +576,9 @@ function renderComments(activity) {
     submit.disabled = true;
     try {
       await apiPost("/api/comments", { activityId: activity.id, body: body.value });
-      await loadBootstrap();
+      await loadBootstrap({ selectedActivityId: activity.id });
+    } catch (error) {
+      form.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
     }
@@ -532,6 +596,13 @@ function renderAdminArea(activity) {
   const place = input("text", activity.place || "");
   const note = element("textarea");
   note.value = activity.handoverNote || "";
+  const requiredAdults = input("number", activity.requiredAdults || "1");
+  requiredAdults.min = "1";
+  requiredAdults.max = "20";
+  const watchTimeUnitMinutes = input("number", activity.watchTimeUnitMinutes || "30");
+  watchTimeUnitMinutes.min = "5";
+  watchTimeUnitMinutes.max = "120";
+  watchTimeUnitMinutes.step = "5";
   const status = element("select");
   ["公開", "下書き", "中止"].forEach((value) => {
     const option = element("option", "", value);
@@ -547,6 +618,8 @@ function renderAdminArea(activity) {
     labelWrap("終了", end),
     labelWrap("場所", place),
     labelWrap("状態", status),
+    labelWrap("必要な見守り人数", requiredAdults),
+    labelWrap("見守り単位(分)", watchTimeUnitMinutes),
     labelWrap("引き継ぎ", note),
     submit
   );
@@ -554,7 +627,7 @@ function renderAdminArea(activity) {
     event.preventDefault();
     submit.disabled = true;
     try {
-      await apiPost("/api/activities", {
+      const result = await apiPost("/api/activities", {
         id: activity.id === "__new__" ? "" : activity.id,
         date: date.value,
         startTime: start.value,
@@ -562,40 +635,59 @@ function renderAdminArea(activity) {
         place: place.value,
         handoverNote: note.value,
         status: status.value,
+        requiredAdults: requiredAdults.value,
+        watchTimeUnitMinutes: watchTimeUnitMinutes.value,
       });
-      await loadBootstrap();
+      await loadBootstrap({ selectedActivityId: result.activity.id });
+    } catch (error) {
+      form.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
     }
   });
-  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form, renderMemberAdminForm());
+  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form, renderMemberAdminPanel());
   return area;
 }
 
-function renderMemberAdminForm() {
+function renderMemberAdminPanel() {
+  const panel = element("div", "admin-area");
+  panel.append(element("h3", "", "メンバー管理"));
+  state.members.forEach((member) => {
+    panel.append(renderMemberAdminForm(member));
+  });
+  panel.append(renderMemberAdminForm());
+  return panel;
+}
+
+function renderMemberAdminForm(member = null) {
   const form = element("form", "form-grid");
-  const playerName = input("text", "");
-  const grade = input("text", "");
-  const familyName = input("text", "");
-  const displayName = input("text", "");
-  const parentEmails = input("text", "");
-  const calendarEmail = input("email", "");
+  const playerName = input("text", member?.playerName || "");
+  const grade = input("text", member?.grade || "");
+  const familyName = input("text", member?.familyName || "");
+  const displayName = input("text", member?.displayName || "");
+  const parentEmails = input("text", member?.parentEmails || "");
+  const calendarEmail = input("email", member?.calendarEmail || "");
+  const active = checkbox("有効");
+  active.input.checked = member?.active !== false;
+  const activeRow = element("div", "check-row");
+  activeRow.append(active.label);
   playerName.placeholder = "例: 山田 太郎";
   grade.placeholder = "例: 小6";
   familyName.placeholder = "例: 山田";
   displayName.placeholder = "例: 太郎";
   parentEmails.placeholder = "parent@example.com";
   calendarEmail.placeholder = "任意";
-  const submit = element("button", "button", "メンバーを追加");
+  const submit = element("button", "button", member ? "メンバーを保存" : "メンバーを追加");
   submit.type = "submit";
   form.append(
-    element("h3", "", "メンバー追加"),
+    element("h3", "", member ? `${member.displayName || member.playerName} の編集` : "メンバー追加"),
     labelWrap("選手名", playerName),
     labelWrap("学年", grade),
     labelWrap("家庭名", familyName),
     labelWrap("表示名", displayName),
     labelWrap("保護者Googleメール", parentEmails),
     labelWrap("カレンダー用メール", calendarEmail),
+    activeRow,
     submit
   );
   form.addEventListener("submit", async (event) => {
@@ -603,15 +695,18 @@ function renderMemberAdminForm() {
     submit.disabled = true;
     try {
       await apiPost("/api/members", {
+        id: member?.id || "",
         playerName: playerName.value,
         grade: grade.value,
         familyName: familyName.value,
         displayName: displayName.value || playerName.value,
         parentEmails: parentEmails.value,
         calendarEmail: calendarEmail.value,
-        active: true,
+        active: active.input.checked,
       });
-      await loadBootstrap();
+      await loadBootstrap({ selectedActivityId: state.selectedActivityId });
+    } catch (error) {
+      form.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
     }
@@ -639,9 +734,7 @@ function selectedActivity() {
 function filteredActivities() {
   return state.activities.filter((activity) => {
     if (state.filter === "shortage") return watchShortage(activity).hasShortage;
-    if (state.filter === "mine") {
-      return state.responses.some((response) => response.activityId === activity.id && state.linkedMemberIds.includes(response.memberId));
-    }
+    if (state.filter === "mine") return state.isAdmin || state.linkedMemberIds.length > 0;
     return true;
   });
 }
@@ -658,9 +751,16 @@ function participantMembers(activityId) {
   return state.members.filter((member) => ids.has(member.id));
 }
 
+function absentMembers(activityId) {
+  const ids = new Set(state.responses.filter((response) => response.activityId === activityId && response.attendanceStatus === "欠席").map((response) => response.memberId));
+  return state.members.filter((member) => ids.has(member.id));
+}
+
 function unansweredMembers(activityId) {
   const answered = new Map(state.responses.filter((response) => response.activityId === activityId).map((response) => [response.memberId, response.attendanceStatus]));
-  return state.members.filter((member) => !answered.has(member.id) || ["未回答", "未定"].includes(answered.get(member.id)));
+  return state.members
+    .filter((member) => member.active !== false)
+    .filter((member) => !answered.has(member.id) || ["未回答", "未定"].includes(answered.get(member.id)));
 }
 
 function responseFor(activityId, memberId) {
@@ -669,6 +769,23 @@ function responseFor(activityId, memberId) {
 
 function watchResponses(activityId) {
   return state.responses.filter((response) => response.activityId === activityId);
+}
+
+function dutyMembers(activityId, key) {
+  return watchResponses(activityId)
+    .filter((response) => response[key] === "true")
+    .map((response) => memberLabel(response.memberId));
+}
+
+function watchDutyRows(activityId) {
+  return watchResponses(activityId)
+    .filter((response) => response.canWatch === "true")
+    .map((response) => `${memberLabel(response.memberId)} ${response.watchStartTime || "--:--"}-${response.watchEndTime || "--:--"}`);
+}
+
+function memberLabel(memberId) {
+  const member = state.members.find((item) => item.id === memberId);
+  return member?.displayName || member?.playerName || "未登録メンバー";
 }
 
 function watchShortage(activity) {

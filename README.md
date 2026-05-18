@@ -66,6 +66,7 @@ wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
 wrangler secret put GOOGLE_PRIVATE_KEY
 wrangler secret put SHEET_ID
 wrangler secret put CALENDAR_ID
+wrangler secret put CALENDAR_SUBSCRIBE_URL
 wrangler secret put ADMIN_EMAILS
 wrangler secret put ALLOWED_ORIGINS
 ```
@@ -95,6 +96,7 @@ Docker運用では `GOOGLE_PRIVATE_KEY` は改行を `\n` にした1行文字列
 ## 管理者
 
 `ADMIN_EMAILS` に含まれるGoogleアカウントだけが、活動登録・編集、メンバー登録・編集を実行できます。
+ローカルの `DEMO_MODE=true` では、ログイン画面の「管理者デモで見る」から管理者機能を確認できます。
 
 ## MVP機能
 

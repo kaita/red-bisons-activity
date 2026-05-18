@@ -39,6 +39,7 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/calendar",
 ].join(" ");
+const MAX_JSON_BODY_BYTES = 24_000;
 
 let cachedGoogleCerts = null;
 let cachedServiceToken = null;
@@ -49,8 +50,8 @@ export default {
     try {
       if (request.method === "OPTIONS") return optionsResponse(request, env);
       const url = new URL(request.url);
-      if (url.pathname.startsWith("/api/")) return handleApi(request, env, url);
-      return env.ASSETS.fetch(request);
+      if (url.pathname.startsWith("/api/")) return await handleApi(request, env, url);
+      return withSecurityHeaders(await env.ASSETS.fetch(request));
     } catch (error) {
       if (error instanceof HttpError) {
         return json({ error: error.message }, error.status, request, env);
@@ -63,7 +64,11 @@ export default {
 
 async function handleApi(request, env, url) {
   if (url.pathname === "/api/config" && request.method === "GET") {
-    return json({ googleClientId: env.GOOGLE_CLIENT_ID || "", demoMode: isDemoMode(env) }, 200, request, env);
+    return json({
+      googleClientId: env.GOOGLE_CLIENT_ID || "",
+      demoMode: isDemoMode(env),
+      calendarSubscribeUrl: env.CALENDAR_SUBSCRIBE_URL || "",
+    }, 200, request, env);
   }
 
   if (isDemoMode(env)) {
@@ -71,6 +76,7 @@ async function handleApi(request, env, url) {
   }
 
   const user = await requireUser(request, env);
+  const userIsAdmin = isAdminUser(user, env);
 
   if (url.pathname === "/api/setup" && request.method === "POST") {
     requireAdmin(user, env);
@@ -79,7 +85,7 @@ async function handleApi(request, env, url) {
   }
 
   if (url.pathname === "/api/bootstrap" && request.method === "GET") {
-    const data = await readAllData(env);
+    const data = await readAllData(env, { includeInactive: userIsAdmin, includeDrafts: userIsAdmin });
     const context = buildUserContext(user, data, env);
     requireMemberOrAdmin(context);
     return json(toBootstrapPayload(context, data), 200, request, env);
@@ -106,7 +112,7 @@ async function handleApi(request, env, url) {
   if (url.pathname === "/api/activities" && request.method === "POST") {
     requireAdmin(user, env);
     const payload = await readJson(request);
-    const data = await readAllData(env);
+    const data = await readAllData(env, { includeInactive: true, includeDrafts: true });
     const activity = await upsertActivity(payload, data, env);
     return json({ ok: true, activity }, 200, request, env);
   }
@@ -114,9 +120,9 @@ async function handleApi(request, env, url) {
   if (url.pathname === "/api/members" && request.method === "POST") {
     requireAdmin(user, env);
     const payload = await readJson(request);
-    const data = await readAllData(env);
+    const data = await readAllData(env, { includeInactive: true, includeDrafts: true });
     const member = await upsertMember(payload, data, env);
-    return json({ ok: true, member: sanitizeMember(member) }, 200, request, env);
+    return json({ ok: true, member: sanitizeMember(member, { includePrivate: true }) }, 200, request, env);
   }
 
   return json({ error: "APIが見つかりません。" }, 404, request, env);
@@ -125,10 +131,11 @@ async function handleApi(request, env, url) {
 async function handleDemoApi(request, env, url) {
   const user = await requireUser(request, env);
   const data = getDemoData();
+  const isAdmin = isAdminUser(user, env);
   const context = {
     user,
-    isAdmin: false,
-    linkedMemberIds: ["member_minato"],
+    isAdmin,
+    linkedMemberIds: isAdmin ? data.members.map((member) => member.id) : ["member_minato"],
   };
 
   if (url.pathname === "/api/bootstrap" && request.method === "GET") {
@@ -137,9 +144,16 @@ async function handleDemoApi(request, env, url) {
 
   if (url.pathname === "/api/responses" && request.method === "POST") {
     const payload = await readJson(request);
+    const activity = data.activities.find((item) => item.id === clean(payload.activityId));
+    const member = data.members.find((item) => item.id === clean(payload.memberId));
+    if (!activity) throw new HttpError(400, "活動が見つかりません。");
+    if (!member) throw new HttpError(400, "選手が見つかりません。");
+    if (!context.isAdmin && !context.linkedMemberIds.includes(member.id)) {
+      throw new HttpError(403, "この選手の回答を編集する権限がありません。");
+    }
     const response = {
-      activityId: clean(payload.activityId),
-      memberId: clean(payload.memberId),
+      activityId: activity.id,
+      memberId: member.id,
       parentEmail: user.email,
       attendanceStatus: validateAttendance(payload.attendanceStatus),
       canOpen: boolString(payload.canOpen),
@@ -150,6 +164,7 @@ async function handleDemoApi(request, env, url) {
       comment: clean(payload.comment).slice(0, 800),
       updatedAt: new Date().toISOString(),
     };
+    validateWatchTimes(response, activity);
     const index = data.responses.findIndex((item) => item.activityId === response.activityId && item.memberId === response.memberId);
     if (index >= 0) data.responses[index] = response;
     else data.responses.push(response);
@@ -158,11 +173,13 @@ async function handleDemoApi(request, env, url) {
 
   if (url.pathname === "/api/comments" && request.method === "POST") {
     const payload = await readJson(request);
+    const activity = data.activities.find((item) => item.id === clean(payload.activityId));
+    if (!activity) throw new HttpError(400, "活動が見つかりません。");
     const body = clean(payload.body).slice(0, 1000);
     if (!body) throw new HttpError(400, "コメントを入力してください。");
     const comment = {
       id: id("comment"),
-      activityId: clean(payload.activityId),
+      activityId: activity.id,
       userEmail: user.email,
       displayName: user.name,
       body,
@@ -171,6 +188,20 @@ async function handleDemoApi(request, env, url) {
     };
     data.comments.push(comment);
     return json({ ok: true, comment: sanitizeComment(comment) }, 200, request, env);
+  }
+
+  if (url.pathname === "/api/activities" && request.method === "POST") {
+    requireAdmin(user, env);
+    const payload = await readJson(request);
+    const activity = await upsertDemoActivity(payload, data);
+    return json({ ok: true, activity: sanitizeActivity(activity) }, 200, request, env);
+  }
+
+  if (url.pathname === "/api/members" && request.method === "POST") {
+    requireAdmin(user, env);
+    const payload = await readJson(request);
+    const member = upsertDemoMember(payload, data);
+    return json({ ok: true, member: sanitizeMember(member, { includePrivate: true }) }, 200, request, env);
   }
 
   return json({ error: "デモモードでは未対応のAPIです。" }, 404, request, env);
@@ -184,6 +215,13 @@ async function requireUser(request, env) {
     return {
       email: "demo.parent@example.com",
       name: "デモ保護者",
+      picture: "",
+    };
+  }
+  if (isDemoMode(env) && match[1] === "demo-admin-token") {
+    return {
+      email: "demo.admin@example.com",
+      name: "デモ管理者",
       picture: "",
     };
   }
@@ -245,8 +283,7 @@ async function findGoogleJwk(kid) {
 }
 
 function buildUserContext(user, data, env) {
-  const adminEmails = csv(env.ADMIN_EMAILS).map((email) => email.toLowerCase());
-  const isAdmin = adminEmails.includes(user.email);
+  const isAdmin = isAdminUser(user, env);
   const linkedMemberIds = data.members
     .filter((member) => truthy(member.active))
     .filter((member) => csv(member.parentEmails).map((email) => email.toLowerCase()).includes(user.email))
@@ -261,11 +298,16 @@ function requireMemberOrAdmin(context) {
 }
 
 function requireAdmin(user, env) {
-  const adminEmails = csv(env.ADMIN_EMAILS).map((email) => email.toLowerCase());
-  if (!adminEmails.includes(user.email)) throw new HttpError(403, "管理者権限が必要です。");
+  if (!isAdminUser(user, env)) throw new HttpError(403, "管理者権限が必要です。");
 }
 
-async function readAllData(env) {
+function isAdminUser(user, env) {
+  if (isDemoMode(env) && user.email === "demo.admin@example.com") return true;
+  const adminEmails = csv(env.ADMIN_EMAILS).map((email) => email.toLowerCase());
+  return adminEmails.includes(user.email);
+}
+
+async function readAllData(env, options = {}) {
   const [members, activities, responses, comments] = await Promise.all([
     readTable(env, "Members"),
     readTable(env, "Activities"),
@@ -273,9 +315,9 @@ async function readAllData(env) {
     readTable(env, "ActivityComments"),
   ]);
   return {
-    members: members.filter((member) => truthy(member.active)),
+    members: options.includeInactive ? members : members.filter((member) => truthy(member.active)),
     activities: activities
-      .filter((activity) => activity.status !== "下書き")
+      .filter((activity) => options.includeDrafts || activity.status !== "下書き")
       .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`)),
     responses,
     comments,
@@ -287,7 +329,7 @@ function toBootstrapPayload(context, data) {
     user: context.user,
     isAdmin: context.isAdmin,
     linkedMemberIds: context.linkedMemberIds,
-    members: data.members.map(sanitizeMember),
+    members: data.members.map((member) => sanitizeMember(member, { includePrivate: context.isAdmin })),
     activities: data.activities.map(sanitizeActivity),
     responses: data.responses.map(sanitizeResponse),
     comments: data.comments.map(sanitizeComment),
@@ -383,14 +425,16 @@ async function upsertActivity(payload, data, env) {
 
 async function upsertMember(payload, data, env) {
   const existing = data.members.find((item) => item.id === clean(payload.id));
+  const parentEmails = csv(payload.parentEmails).map((email) => validateEmail(email, "保護者メールアドレス").toLowerCase());
+  const calendarEmail = clean(payload.calendarEmail) ? validateEmail(payload.calendarEmail, "カレンダー用メール").toLowerCase() : "";
   const member = {
     id: existing?.id || clean(payload.id) || id("member"),
     playerName: clean(payload.playerName).slice(0, 80),
     grade: clean(payload.grade).slice(0, 20),
     familyName: clean(payload.familyName).slice(0, 80),
     displayName: clean(payload.displayName || payload.playerName).slice(0, 80),
-    parentEmails: csv(payload.parentEmails).map((email) => email.toLowerCase()).join(","),
-    calendarEmail: clean(payload.calendarEmail).toLowerCase(),
+    parentEmails: parentEmails.join(","),
+    calendarEmail,
     active: payload.active === false ? "false" : "true",
   };
   if (!member.playerName) throw new HttpError(400, "選手名を入力してください。");
@@ -403,6 +447,54 @@ async function upsertMember(payload, data, env) {
   } else {
     await appendTableRow(env, "Members", member);
   }
+  return member;
+}
+
+async function upsertDemoActivity(payload, data) {
+  const existing = data.activities.find((item) => item.id === clean(payload.id));
+  const activity = {
+    id: existing?.id || clean(payload.id) || id("activity"),
+    date: validateDate(payload.date),
+    startTime: validateTime(payload.startTime, "開始時刻"),
+    endTime: validateTime(payload.endTime, "終了時刻"),
+    place: clean(payload.place).slice(0, 120),
+    handoverNote: clean(payload.handoverNote).slice(0, 1200),
+    status: ACTIVITY_STATUSES.has(clean(payload.status)) ? clean(payload.status) : "公開",
+    requiredAdults: String(clampInt(payload.requiredAdults || existing?.requiredAdults || 1, 1, 20)),
+    watchTimeUnitMinutes: String(clampInt(payload.watchTimeUnitMinutes || existing?.watchTimeUnitMinutes || 30, 5, 120)),
+    calendarEventId: existing?.calendarEventId || "",
+    calendarSyncStatus: "デモ",
+    updatedAt: new Date().toISOString(),
+  };
+  if (toMinutes(activity.endTime) <= toMinutes(activity.startTime)) {
+    throw new HttpError(400, "終了時刻は開始時刻より後にしてください。");
+  }
+  const index = data.activities.findIndex((item) => item.id === activity.id);
+  if (index >= 0) data.activities[index] = activity;
+  else data.activities.push(activity);
+  data.activities.sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+  return activity;
+}
+
+function upsertDemoMember(payload, data) {
+  const existing = data.members.find((item) => item.id === clean(payload.id));
+  const parentEmails = csv(payload.parentEmails).map((email) => validateEmail(email, "保護者メールアドレス").toLowerCase());
+  const calendarEmail = clean(payload.calendarEmail) ? validateEmail(payload.calendarEmail, "カレンダー用メール").toLowerCase() : "";
+  const member = {
+    id: existing?.id || clean(payload.id) || id("member"),
+    playerName: clean(payload.playerName).slice(0, 80),
+    grade: clean(payload.grade).slice(0, 20),
+    familyName: clean(payload.familyName).slice(0, 80),
+    displayName: clean(payload.displayName || payload.playerName).slice(0, 80),
+    parentEmails: parentEmails.join(","),
+    calendarEmail,
+    active: payload.active === false ? "false" : "true",
+  };
+  if (!member.playerName) throw new HttpError(400, "選手名を入力してください。");
+  if (!member.parentEmails) throw new HttpError(400, "保護者メールアドレスを入力してください。");
+  const index = data.members.findIndex((item) => item.id === member.id);
+  if (index >= 0) data.members[index] = member;
+  else data.members.push(member);
   return member;
 }
 
@@ -616,8 +708,14 @@ function validateTime(value, label) {
   return time;
 }
 
-function sanitizeMember(member) {
-  return {
+function validateEmail(value, label) {
+  const email = clean(value);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, `${label}の形式が不正です。`);
+  return email;
+}
+
+function sanitizeMember(member, options = {}) {
+  const sanitized = {
     id: member.id,
     playerName: member.playerName,
     grade: member.grade,
@@ -625,6 +723,11 @@ function sanitizeMember(member) {
     displayName: member.displayName,
     active: truthy(member.active),
   };
+  if (options.includePrivate) {
+    sanitized.parentEmails = member.parentEmails || "";
+    sanitized.calendarEmail = member.calendarEmail || "";
+  }
+  return sanitized;
 }
 
 function sanitizeActivity(activity) {
@@ -813,8 +916,11 @@ function getDemoData() {
 }
 
 async function readJson(request) {
+  const contentLength = Number(request.headers.get("Content-Length") || "0");
+  if (contentLength > MAX_JSON_BODY_BYTES) throw new HttpError(413, "送信内容が大きすぎます。");
   const text = await request.text();
   if (!text) return {};
+  if (new TextEncoder().encode(text).length > MAX_JSON_BODY_BYTES) throw new HttpError(413, "送信内容が大きすぎます。");
   try {
     return JSON.parse(text);
   } catch {
@@ -828,6 +934,7 @@ function json(data, status = 200, request, env) {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      ...securityHeaders(),
       ...corsHeaders(request, env),
     },
   });
@@ -838,6 +945,7 @@ function optionsResponse(request, env) {
     status: 204,
     headers: {
       ...corsHeaders(request, env),
+      ...securityHeaders(),
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
       "Access-Control-Allow-Headers": "Authorization,Content-Type",
       "Access-Control-Max-Age": "600",
@@ -853,6 +961,37 @@ function corsHeaders(request, env) {
   return {
     "Access-Control-Allow-Origin": origin,
     Vary: "Origin",
+  };
+}
+
+function withSecurityHeaders(response) {
+  const headers = new Headers(response.headers);
+  Object.entries(securityHeaders()).forEach(([key, value]) => headers.set(key, value));
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function securityHeaders() {
+  return {
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "script-src 'self' https://accounts.google.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' https://lh3.googleusercontent.com data:",
+      "connect-src 'self' https://accounts.google.com https://www.googleapis.com https://oauth2.googleapis.com",
+      "frame-src https://accounts.google.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; "),
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   };
 }
 

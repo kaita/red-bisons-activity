@@ -11,6 +11,7 @@ Required secrets:
 - `GOOGLE_PRIVATE_KEY`
 - `SHEET_ID`
 - `CALENDAR_ID`
+- `CALENDAR_SUBSCRIBE_URL`
 - `ADMIN_EMAILS`
 - `ALLOWED_ORIGINS`
 
@@ -37,4 +38,3 @@ All app data APIs require a Google ID token. The Worker verifies:
 - Never hard-code service account JSON, private keys, OAuth secrets, tokens, sheet URLs, or calendar IDs.
 - Keep `.dev.vars`, `.env`, and generated deployment state out of Git.
 - Review diffs before pushing.
-
