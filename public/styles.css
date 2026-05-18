@@ -154,6 +154,11 @@ a.button:focus-visible,
   padding: 16px;
 }
 
+.layout.page-layout {
+  grid-template-columns: minmax(0, 920px);
+  justify-content: center;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -169,6 +174,10 @@ a.button:focus-visible,
 .content {
   min-width: 0;
   overflow: hidden;
+}
+
+.new-activity-page {
+  align-self: start;
 }
 
 .toolbar,
@@ -444,6 +453,10 @@ a.button:focus-visible,
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--line);
+}
+
+.new-page-header {
+  background: #fbfcfc;
 }
 
 .detail-header h2 {

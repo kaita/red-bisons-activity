@@ -199,10 +199,9 @@ function renderTopbar() {
 }
 
 function renderLayout(selected) {
-  const layout = element("div", "layout");
-  const sidebar = element("aside", "panel sidebar");
-  sidebar.append(renderToolbar(), renderCalendar(), renderActivityList());
-  const content = element("main", "panel content");
+  const isNewActivity = selected?.id === "__new__" && isAdminMode();
+  const layout = element("div", isNewActivity ? "layout page-layout" : "layout");
+  const content = element("main", isNewActivity ? "panel content new-activity-page" : "panel content");
   content.id = "activity-detail";
   content.tabIndex = -1;
   if (!selected) {
@@ -211,9 +210,15 @@ function renderLayout(selected) {
     if (state.flashMessage) {
       content.append(element("div", `${state.flashMessage.type || "notice"} app-message`, state.flashMessage.text));
     }
-    content.append(renderActivityDetail(selected));
+    content.append(isNewActivity ? renderNewActivityPage(selected) : renderActivityDetail(selected));
   }
-  layout.append(sidebar, content);
+  if (isNewActivity) {
+    layout.append(content);
+  } else {
+    const sidebar = element("aside", "panel sidebar");
+    sidebar.append(renderToolbar(), renderCalendar(), renderActivityList());
+    layout.append(sidebar, content);
+  }
   return layout;
 }
 
@@ -270,6 +275,7 @@ function renderToolbar() {
     create.type = "button";
     create.addEventListener("click", () => {
       state.selectedActivityId = "__new__";
+      state.flashMessage = null;
       renderApp();
     });
     toolbar.append(create);
@@ -380,6 +386,7 @@ function renderActivityList() {
 
 function openActivity(activityId, options = {}) {
   state.selectedActivityId = activityId;
+  state.flashMessage = null;
   renderApp();
   if (options.scrollToDetail && window.matchMedia("(max-width: 900px)").matches) {
     requestAnimationFrame(() => {
@@ -388,6 +395,31 @@ function openActivity(activityId, options = {}) {
       detail?.focus({ preventScroll: true });
     });
   }
+}
+
+function renderNewActivityPage(activity) {
+  const fragment = document.createDocumentFragment();
+  const header = element("div", "detail-header new-page-header");
+  const title = element("div");
+  title.append(
+    element("h2", "", "新規活動追加"),
+    element("div", "meta", "", [
+      element("span", "badge", "管理者"),
+      element("span", "badge", "活動予定"),
+    ])
+  );
+  const actions = element("div", "detail-actions");
+  const back = element("button", "button ghost", "一覧に戻る");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    state.selectedActivityId = state.activities[0]?.id || "";
+    state.flashMessage = null;
+    renderApp();
+  });
+  actions.append(back);
+  header.append(title, actions);
+  fragment.append(header, section("日程", renderAdminArea(activity, { title: "" })));
+  return fragment;
 }
 
 function renderActivityDetail(activity) {
@@ -411,11 +443,6 @@ function renderActivityDetail(activity) {
   }
   header.append(title, actions);
   fragment.append(header);
-
-  if (activity.id === "__new__") {
-    if (isAdminMode()) fragment.append(section("管理者", renderAdminArea(activity)));
-    return fragment;
-  }
 
   if (shortage.hasShortage) {
     fragment.append(section("見守りアラート", element("div", "notice", shortage.message)));
@@ -647,7 +674,7 @@ async function recoverMissingActivity(error) {
   return true;
 }
 
-function renderAdminArea(activity) {
+function renderAdminArea(activity, options = {}) {
   const area = element("div", "admin-area");
   const form = element("form", "admin-activity-form");
   const date = input("date", activity.date || "");
@@ -726,8 +753,11 @@ function renderAdminArea(activity) {
       submit.disabled = false;
     }
   });
-  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form);
-  if (activity.id !== "__new__") area.append(renderMemberAdminPanel());
+  const title = options.title ?? (activity.id === "__new__" ? "新規活動" : "活動編集");
+  if (title) area.append(element("h3", "", title));
+  area.append(form);
+  const includeMembers = options.includeMembers ?? activity.id !== "__new__";
+  if (includeMembers) area.append(renderMemberAdminPanel());
   return area;
 }
 
