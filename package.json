@@ -5,12 +5,12 @@
   "type": "module",
   "description": "RED BISONS activity management app with Google login, Sheets storage, and shared Google Calendar support.",
   "scripts": {
-    "check": "node --check src/worker.js && node --check public/app.js",
+    "check": "node --check src/worker.js && node --check src/server.js && node --check public/app.js",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "start": "node src/server.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
   }
 }
-
