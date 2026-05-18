@@ -183,6 +183,21 @@ a.button:focus-visible,
   border-bottom: 1px solid var(--line);
 }
 
+.mode-switch {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.mode-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -507,6 +522,11 @@ a.button:focus-visible,
   gap: 12px;
 }
 
+.response-form {
+  display: grid;
+  gap: 16px;
+}
+
 .form-grid h3 {
   grid-column: 1 / -1;
   margin: 8px 0 0;
@@ -564,6 +584,20 @@ textarea {
 .check-row input {
   width: 18px;
   min-height: 18px;
+}
+
+.form-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.form-actions .button {
+  min-width: 180px;
+  min-height: 48px;
+  box-shadow: 0 6px 16px rgba(185, 28, 28, 0.16);
 }
 
 .notice {
@@ -654,6 +688,14 @@ textarea {
 
   .segmented.three {
     grid-template-columns: 1fr;
+  }
+
+  .form-actions {
+    display: grid;
+  }
+
+  .form-actions .button {
+    width: 100%;
   }
 
   .calendar-grid {

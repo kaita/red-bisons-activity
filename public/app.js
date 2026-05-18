@@ -11,6 +11,7 @@ const state = {
   selectedActivityId: "",
   filter: "all",
   view: "list",
+  roleView: localStorage.getItem("redBisonsRoleView") || "",
 };
 
 const app = document.querySelector("#app");
@@ -70,6 +71,11 @@ async function loadBootstrap(options = {}) {
     const previousSelectedActivityId = options.selectedActivityId || state.selectedActivityId;
     const data = await apiGet("/api/bootstrap");
     Object.assign(state, data);
+    if (!state.isAdmin) {
+      state.roleView = "guardian";
+    } else if (!["admin", "guardian"].includes(state.roleView)) {
+      state.roleView = "admin";
+    }
     state.selectedActivityId = state.activities.some((activity) => activity.id === previousSelectedActivityId)
       ? previousSelectedActivityId
       : state.activities[0]?.id || "";
@@ -176,7 +182,7 @@ function renderTopbar() {
     menu.append(picture);
   }
   menu.append(element("span", "user-name", state.user?.name || state.user?.email || ""));
-  if (state.isAdmin) menu.append(element("span", "badge", "管理者"));
+  if (state.isAdmin) menu.append(element("span", "badge", isAdminMode() ? "管理者モード" : "保護者表示"));
   const signout = element("button", "button ghost", "ログアウト");
   signout.type = "button";
   signout.addEventListener("click", () => {
@@ -245,6 +251,7 @@ function renderToolbar() {
     views.append(button);
   });
 
+  if (state.isAdmin) toolbar.append(renderRoleViewSwitch());
   toolbar.append(statBox, filters, views);
   if (state.config?.calendarSubscribeUrl) {
     const calendar = element("a", "button ghost", "共有カレンダーを開く");
@@ -253,7 +260,7 @@ function renderToolbar() {
     calendar.rel = "noreferrer";
     toolbar.append(calendar);
   }
-  if (state.isAdmin) {
+  if (isAdminMode()) {
     const create = element("button", "button primary", "新規活動を追加");
     create.type = "button";
     create.addEventListener("click", () => {
@@ -263,6 +270,30 @@ function renderToolbar() {
     toolbar.append(create);
   }
   return toolbar;
+}
+
+function renderRoleViewSwitch() {
+  const switcher = element("div", "mode-switch");
+  const label = element("span", "mode-label", "表示モード");
+  const controls = element("div", "segmented");
+  [
+    ["guardian", "保護者"],
+    ["admin", "管理者"],
+  ].forEach(([key, labelText]) => {
+    const button = element("button", state.roleView === key ? "active" : "", labelText);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      state.roleView = key;
+      localStorage.setItem("redBisonsRoleView", key);
+      if (!isAdminMode() && state.selectedActivityId === "__new__") {
+        state.selectedActivityId = state.activities[0]?.id || "";
+      }
+      renderApp();
+    });
+    controls.append(button);
+  });
+  switcher.append(label, controls);
+  return switcher;
 }
 
 function renderStat(value, label) {
@@ -377,7 +408,7 @@ function renderActivityDetail(activity) {
   fragment.append(header);
 
   if (activity.id === "__new__") {
-    if (state.isAdmin) fragment.append(section("管理者", renderAdminArea(activity)));
+    if (isAdminMode()) fragment.append(section("管理者", renderAdminArea(activity)));
     return fragment;
   }
 
@@ -390,7 +421,7 @@ function renderActivityDetail(activity) {
   fragment.append(section("参加者一覧", renderParticipants(activity)));
   fragment.append(section("自分の回答", renderResponseForm(activity)));
   fragment.append(section("引き継ぎ・連絡", renderComments(activity)));
-  if (state.isAdmin) fragment.append(section("管理者", renderAdminArea(activity)));
+  if (isAdminMode()) fragment.append(section("管理者", renderAdminArea(activity)));
   return fragment;
 }
 
@@ -463,11 +494,14 @@ function renderParticipantGroup(title, members) {
 }
 
 function renderResponseForm(activity) {
-  const wrap = element("form");
+  const wrap = element("form", "response-form");
   const linkedMembers = state.members.filter((member) => state.linkedMemberIds.includes(member.id));
-  const memberOptions = state.isAdmin ? state.members.filter((member) => member.active !== false) : linkedMembers;
-  if (!linkedMembers.length && !state.isAdmin) {
-    wrap.append(element("div", "notice", "このGoogleアカウントに紐づく選手がありません。管理者に登録を依頼してください。"));
+  const memberOptions = isAdminMode() ? state.members.filter((member) => member.active !== false) : linkedMembers;
+  if (!memberOptions.length) {
+    const message = state.isAdmin
+      ? "保護者表示では、このGoogleアカウントに紐づく選手だけ回答できます。必要ならメンバー管理で保護者メールを追加してください。"
+      : "このGoogleアカウントに紐づく選手がありません。管理者に登録を依頼してください。";
+    wrap.append(element("div", "notice", message));
     return wrap;
   }
 
@@ -526,8 +560,10 @@ function renderResponseForm(activity) {
   times.append(labelWrap("見守り開始", watchStart), labelWrap("見守り終了", watchEnd));
   const submit = element("button", "button primary", "回答を保存");
   submit.type = "submit";
+  const actions = element("div", "form-actions");
+  actions.append(submit);
 
-  wrap.append(grid, checks, times, labelWrap("コメント", comment), submit);
+  wrap.append(grid, checks, times, labelWrap("コメント", comment), actions);
   wrap.addEventListener("submit", async (event) => {
     event.preventDefault();
     submit.disabled = true;
@@ -612,6 +648,8 @@ function renderAdminArea(activity) {
   status.value = activity.status || "公開";
   const submit = element("button", "button primary", "活動を保存");
   submit.type = "submit";
+  const actions = element("div", "form-actions");
+  actions.append(submit);
   form.append(
     labelWrap("日付", date),
     labelWrap("開始", start),
@@ -621,7 +659,7 @@ function renderAdminArea(activity) {
     labelWrap("必要な見守り人数", requiredAdults),
     labelWrap("見守り単位(分)", watchTimeUnitMinutes),
     labelWrap("引き継ぎ", note),
-    submit
+    actions
   );
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -679,6 +717,8 @@ function renderMemberAdminForm(member = null) {
   calendarEmail.placeholder = "任意";
   const submit = element("button", "button", member ? "メンバーを保存" : "メンバーを追加");
   submit.type = "submit";
+  const actions = element("div", "form-actions");
+  actions.append(submit);
   form.append(
     element("h3", "", member ? `${member.displayName || member.playerName} の編集` : "メンバー追加"),
     labelWrap("選手名", playerName),
@@ -688,7 +728,7 @@ function renderMemberAdminForm(member = null) {
     labelWrap("保護者Googleメール", parentEmails),
     labelWrap("カレンダー用メール", calendarEmail),
     activeRow,
-    submit
+    actions
   );
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -734,7 +774,10 @@ function selectedActivity() {
 function filteredActivities() {
   return state.activities.filter((activity) => {
     if (state.filter === "shortage") return watchShortage(activity).hasShortage;
-    if (state.filter === "mine") return state.isAdmin || state.linkedMemberIds.length > 0;
+    if (state.filter === "mine") {
+      if (!state.linkedMemberIds.length) return false;
+      return state.responses.some((response) => response.activityId === activity.id && state.linkedMemberIds.includes(response.memberId));
+    }
     return true;
   });
 }
@@ -919,4 +962,8 @@ function renderFatal(message) {
     element("h1", "", "RED BISONS 活動管理"),
     element("div", "error", message),
   ]));
+}
+
+function isAdminMode() {
+  return state.isAdmin && state.roleView === "admin";
 }
