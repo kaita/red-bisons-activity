@@ -522,6 +522,57 @@ a.button:focus-visible,
   gap: 12px;
 }
 
+.admin-activity-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-row {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-row {
+  grid-template-columns: minmax(150px, 0.9fr) minmax(260px, 1.4fr) minmax(120px, 0.7fr);
+  align-items: end;
+}
+
+.place-row {
+  grid-template-columns: 1fr;
+}
+
+.watch-config-row {
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+}
+
+.time-group {
+  display: grid;
+  gap: 6px;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.time-range-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.time-separator {
+  padding-bottom: 10px;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.form-full {
+  grid-column: 1 / -1;
+}
+
 .response-form {
   display: grid;
   gap: 16px;
@@ -608,6 +659,10 @@ textarea {
   color: #7c2d12;
 }
 
+.app-message {
+  margin: 16px 16px 0;
+}
+
 .error {
   padding: 12px;
   border: 1px solid #fecdd3;
@@ -635,7 +690,8 @@ textarea {
   gap: 14px;
 }
 
-.admin-area .form-grid {
+.admin-area .form-grid,
+.admin-activity-form {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -684,6 +740,16 @@ textarea {
   .grid-two,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-row,
+  .watch-config-row,
+  .time-range-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .time-separator {
+    display: none;
   }
 
   .segmented.three {

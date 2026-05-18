@@ -12,6 +12,7 @@ const state = {
   filter: "all",
   view: "list",
   roleView: localStorage.getItem("redBisonsRoleView") || "",
+  flashMessage: null,
 };
 
 const app = document.querySelector("#app");
@@ -71,6 +72,7 @@ async function loadBootstrap(options = {}) {
     const previousSelectedActivityId = options.selectedActivityId || state.selectedActivityId;
     const data = await apiGet("/api/bootstrap");
     Object.assign(state, data);
+    state.flashMessage = options.flashMessage || null;
     if (!state.isAdmin) {
       state.roleView = "guardian";
     } else if (!["admin", "guardian"].includes(state.roleView)) {
@@ -206,6 +208,9 @@ function renderLayout(selected) {
   if (!selected) {
     content.append(element("div", "empty", "表示できる活動がありません。"));
   } else {
+    if (state.flashMessage) {
+      content.append(element("div", `${state.flashMessage.type || "notice"} app-message`, state.flashMessage.text));
+    }
     content.append(renderActivityDetail(selected));
   }
   layout.append(sidebar, content);
@@ -580,8 +585,12 @@ function renderResponseForm(activity) {
         watchEndTime: canWatch.input.checked ? watchEnd.value : "",
         comment: comment.value,
       });
-      await loadBootstrap({ selectedActivityId: activity.id });
+      await loadBootstrap({
+        selectedActivityId: activity.id,
+        flashMessage: { type: "notice", text: "回答を保存しました。" },
+      });
     } catch (error) {
+      if (await recoverMissingActivity(error)) return;
       wrap.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
@@ -612,8 +621,12 @@ function renderComments(activity) {
     submit.disabled = true;
     try {
       await apiPost("/api/comments", { activityId: activity.id, body: body.value });
-      await loadBootstrap({ selectedActivityId: activity.id });
+      await loadBootstrap({
+        selectedActivityId: activity.id,
+        flashMessage: { type: "notice", text: "連絡を投稿しました。" },
+      });
     } catch (error) {
+      if (await recoverMissingActivity(error)) return;
       form.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
@@ -623,9 +636,20 @@ function renderComments(activity) {
   return wrap;
 }
 
+async function recoverMissingActivity(error) {
+  if (!String(error.message || "").includes("活動が見つかりません")) return false;
+  await loadBootstrap({
+    flashMessage: {
+      type: "notice",
+      text: "活動データが更新されていたため、最新の一覧を読み込み直しました。ローカルデモでは、サーバー再起動後に追加予定へ書き込むとこの状態になることがあります。",
+    },
+  });
+  return true;
+}
+
 function renderAdminArea(activity) {
   const area = element("div", "admin-area");
-  const form = element("form", "form-grid");
+  const form = element("form", "admin-activity-form");
   const date = input("date", activity.date || "");
   const start = timeInput(activity.startTime || "");
   const end = timeInput(activity.endTime || "");
@@ -650,15 +674,31 @@ function renderAdminArea(activity) {
   submit.type = "submit";
   const actions = element("div", "form-actions");
   actions.append(submit);
+  const timeGroup = element("div", "time-group");
+  timeGroup.append(
+    element("span", "field-label", "時間"),
+    element("div", "time-range-controls", "", [
+      labelWrap("開始", start),
+      element("span", "time-separator", "〜"),
+      labelWrap("終了", end),
+    ])
+  );
+  const noteField = labelWrap("引き継ぎ", note);
+  noteField.classList.add("form-full");
   form.append(
-    labelWrap("日付", date),
-    labelWrap("開始", start),
-    labelWrap("終了", end),
-    labelWrap("場所", place),
-    labelWrap("状態", status),
-    labelWrap("必要な見守り人数", requiredAdults),
-    labelWrap("見守り単位(分)", watchTimeUnitMinutes),
-    labelWrap("引き継ぎ", note),
+    element("div", "form-row schedule-row", "", [
+      labelWrap("日付", date),
+      timeGroup,
+      labelWrap("状態", status),
+    ]),
+    element("div", "form-row place-row", "", [
+      labelWrap("場所", place),
+    ]),
+    element("div", "form-row watch-config-row", "", [
+      labelWrap("必要な見守り人数", requiredAdults),
+      labelWrap("見守り単位(分)", watchTimeUnitMinutes),
+    ]),
+    noteField,
     actions
   );
   form.addEventListener("submit", async (event) => {
@@ -676,14 +716,18 @@ function renderAdminArea(activity) {
         requiredAdults: requiredAdults.value,
         watchTimeUnitMinutes: watchTimeUnitMinutes.value,
       });
-      await loadBootstrap({ selectedActivityId: result.activity.id });
+      await loadBootstrap({
+        selectedActivityId: result.activity.id,
+        flashMessage: { type: "notice", text: "活動予定を保存しました。" },
+      });
     } catch (error) {
       form.prepend(element("div", "error", error.message));
     } finally {
       submit.disabled = false;
     }
   });
-  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form, renderMemberAdminPanel());
+  area.append(element("h3", "", activity.id === "__new__" ? "新規活動" : "活動編集"), form);
+  if (activity.id !== "__new__") area.append(renderMemberAdminPanel());
   return area;
 }
 
