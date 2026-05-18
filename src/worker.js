@@ -42,6 +42,7 @@ const GOOGLE_SCOPES = [
 
 let cachedGoogleCerts = null;
 let cachedServiceToken = null;
+let demoData = null;
 
 export default {
   async fetch(request, env) {
@@ -62,7 +63,11 @@ export default {
 
 async function handleApi(request, env, url) {
   if (url.pathname === "/api/config" && request.method === "GET") {
-    return json({ googleClientId: env.GOOGLE_CLIENT_ID || "" }, 200, request, env);
+    return json({ googleClientId: env.GOOGLE_CLIENT_ID || "", demoMode: isDemoMode(env) }, 200, request, env);
+  }
+
+  if (isDemoMode(env)) {
+    return handleDemoApi(request, env, url);
   }
 
   const user = await requireUser(request, env);
@@ -117,10 +122,71 @@ async function handleApi(request, env, url) {
   return json({ error: "APIが見つかりません。" }, 404, request, env);
 }
 
+async function handleDemoApi(request, env, url) {
+  const user = await requireUser(request, env);
+  const data = getDemoData();
+  const context = {
+    user,
+    isAdmin: false,
+    linkedMemberIds: ["member_minato"],
+  };
+
+  if (url.pathname === "/api/bootstrap" && request.method === "GET") {
+    return json(toBootstrapPayload(context, data), 200, request, env);
+  }
+
+  if (url.pathname === "/api/responses" && request.method === "POST") {
+    const payload = await readJson(request);
+    const response = {
+      activityId: clean(payload.activityId),
+      memberId: clean(payload.memberId),
+      parentEmail: user.email,
+      attendanceStatus: validateAttendance(payload.attendanceStatus),
+      canOpen: boolString(payload.canOpen),
+      canClose: boolString(payload.canClose),
+      canWatch: boolString(payload.canWatch),
+      watchStartTime: clean(payload.watchStartTime),
+      watchEndTime: clean(payload.watchEndTime),
+      comment: clean(payload.comment).slice(0, 800),
+      updatedAt: new Date().toISOString(),
+    };
+    const index = data.responses.findIndex((item) => item.activityId === response.activityId && item.memberId === response.memberId);
+    if (index >= 0) data.responses[index] = response;
+    else data.responses.push(response);
+    return json({ ok: true, response: sanitizeResponse(response) }, 200, request, env);
+  }
+
+  if (url.pathname === "/api/comments" && request.method === "POST") {
+    const payload = await readJson(request);
+    const body = clean(payload.body).slice(0, 1000);
+    if (!body) throw new HttpError(400, "コメントを入力してください。");
+    const comment = {
+      id: id("comment"),
+      activityId: clean(payload.activityId),
+      userEmail: user.email,
+      displayName: user.name,
+      body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    data.comments.push(comment);
+    return json({ ok: true, comment: sanitizeComment(comment) }, 200, request, env);
+  }
+
+  return json({ error: "デモモードでは未対応のAPIです。" }, 404, request, env);
+}
+
 async function requireUser(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
   if (!match) throw new HttpError(401, "Googleログインが必要です。");
+  if (isDemoMode(env) && match[1] === "demo-local-token") {
+    return {
+      email: "demo.parent@example.com",
+      name: "デモ保護者",
+      picture: "",
+    };
+  }
   return verifyGoogleIdToken(match[1], env);
 }
 
@@ -601,6 +667,151 @@ function sanitizeComment(comment) {
   };
 }
 
+function getDemoData() {
+  if (demoData) return demoData;
+  demoData = {
+    members: [
+      {
+        id: "member_minato",
+        playerName: "皆田 幸輝",
+        grade: "小6",
+        familyName: "皆田",
+        displayName: "幸輝",
+        parentEmails: "demo.parent@example.com",
+        calendarEmail: "",
+        active: "true",
+      },
+      {
+        id: "member_akita",
+        playerName: "秋田 燈史朗",
+        grade: "小6",
+        familyName: "秋田",
+        displayName: "燈史朗",
+        parentEmails: "akita@example.com",
+        calendarEmail: "",
+        active: "true",
+      },
+      {
+        id: "member_matsuzawa",
+        playerName: "松澤",
+        grade: "小6",
+        familyName: "松澤",
+        displayName: "松澤",
+        parentEmails: "matsuzawa@example.com",
+        calendarEmail: "",
+        active: "true",
+      },
+    ],
+    activities: [
+      {
+        id: "activity_2026_06_06",
+        date: "2026-06-06",
+        startTime: "18:00",
+        endTime: "20:30",
+        place: "北小アソビバ",
+        handoverNote: "土曜活動。見守りが前半不足しています。",
+        status: "公開",
+        requiredAdults: "2",
+        watchTimeUnitMinutes: "30",
+        calendarSyncStatus: "デモ",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: "activity_2026_06_07",
+        date: "2026-06-07",
+        startTime: "09:45",
+        endTime: "12:15",
+        place: "北小アソビバ",
+        handoverNote: "鍵返却の確認をお願いします。",
+        status: "公開",
+        requiredAdults: "1",
+        watchTimeUnitMinutes: "30",
+        calendarSyncStatus: "デモ",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: "activity_2026_06_14",
+        date: "2026-06-14",
+        startTime: "09:45",
+        endTime: "12:15",
+        place: "北小アソビバ",
+        handoverNote: "松澤さん海外出張で不在。",
+        status: "公開",
+        requiredAdults: "1",
+        watchTimeUnitMinutes: "30",
+        calendarSyncStatus: "デモ",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    responses: [
+      {
+        activityId: "activity_2026_06_06",
+        memberId: "member_minato",
+        parentEmail: "demo.parent@example.com",
+        attendanceStatus: "参加",
+        canOpen: "false",
+        canClose: "false",
+        canWatch: "true",
+        watchStartTime: "19:00",
+        watchEndTime: "20:30",
+        comment: "レッスン後に参加します。",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        activityId: "activity_2026_06_06",
+        memberId: "member_akita",
+        parentEmail: "akita@example.com",
+        attendanceStatus: "参加",
+        canOpen: "true",
+        canClose: "false",
+        canWatch: "true",
+        watchStartTime: "18:30",
+        watchEndTime: "20:30",
+        comment: "18:30から見守れます。",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        activityId: "activity_2026_06_07",
+        memberId: "member_minato",
+        parentEmail: "demo.parent@example.com",
+        attendanceStatus: "参加",
+        canOpen: "true",
+        canClose: "true",
+        canWatch: "true",
+        watchStartTime: "09:45",
+        watchEndTime: "12:15",
+        comment: "",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        activityId: "activity_2026_06_14",
+        memberId: "member_matsuzawa",
+        parentEmail: "matsuzawa@example.com",
+        attendanceStatus: "欠席",
+        canOpen: "false",
+        canClose: "false",
+        canWatch: "false",
+        watchStartTime: "",
+        watchEndTime: "",
+        comment: "海外出張で不在です。",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    comments: [
+      {
+        id: "comment_demo_1",
+        activityId: "activity_2026_06_06",
+        userEmail: "akita@example.com",
+        displayName: "秋田",
+        body: "前半の見守りに入れる方がもう1人いると助かります。",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  };
+  return demoData;
+}
+
 async function readJson(request) {
   const text = await request.text();
   if (!text) return {};
@@ -643,6 +854,10 @@ function corsHeaders(request, env) {
     "Access-Control-Allow-Origin": origin,
     Vary: "Origin",
   };
+}
+
+function isDemoMode(env) {
+  return env.DEMO_MODE === "true";
 }
 
 function clean(value) {

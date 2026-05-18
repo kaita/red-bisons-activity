@@ -38,7 +38,7 @@ async function apiConfig() {
 
 function setupGoogleSignIn() {
   if (!state.config.googleClientId) {
-    renderFatal("Google OAuth Client ID が未設定です。");
+    if (!state.config.demoMode) renderFatal("Google OAuth Client ID が未設定です。");
     return;
   }
 
@@ -124,7 +124,19 @@ function renderLogin(errorMessage = "") {
   if (errorMessage) main.append(element("div", "error", errorMessage));
   const signin = element("div");
   signin.id = "google-signin";
-  main.append(signin, element("p", "muted small", "登録済みの保護者・管理者アカウントのみ利用できます。"));
+  main.append(signin);
+  if (state.config?.demoMode) {
+    const demoButton = element("button", "button primary", "デモで見る");
+    demoButton.type = "button";
+    demoButton.addEventListener("click", async () => {
+      state.token = "demo-local-token";
+      localStorage.setItem("redBisonsToken", state.token);
+      await loadBootstrap();
+    });
+    main.append(demoButton, element("p", "muted small", "ローカル限定のサンプルデータで画面を確認します。"));
+  } else {
+    main.append(element("p", "muted small", "登録済みの保護者・管理者アカウントのみ利用できます。"));
+  }
   app.append(main);
 }
 
