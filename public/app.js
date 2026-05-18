@@ -183,6 +183,8 @@ function renderLayout(selected) {
   const sidebar = element("aside", "panel sidebar");
   sidebar.append(renderToolbar(), renderCalendar(), renderActivityList());
   const content = element("main", "panel content");
+  content.id = "activity-detail";
+  content.tabIndex = -1;
   if (!selected) {
     content.append(element("div", "empty", "表示できる活動がありません。"));
   } else {
@@ -259,23 +261,31 @@ function renderCalendar() {
   const month = first.getMonth();
   const days = new Date(year, month + 1, 0).getDate();
   const offset = new Date(year, month, 1).getDay();
-  for (let i = 0; i < offset; i += 1) grid.append(element("div", "calendar-day"));
+  for (let i = 0; i < offset; i += 1) {
+    const empty = element("div", "calendar-day empty-day");
+    empty.setAttribute("aria-hidden", "true");
+    grid.append(empty);
+  }
   for (let day = 1; day <= days; day += 1) {
     const iso = `${year}-${pad(month + 1)}-${pad(day)}`;
     const matches = activities.filter((activity) => activity.date === iso);
-    const cell = element("button", `calendar-day${matches.length ? " has-activity" : ""}`);
-    cell.type = "button";
-    cell.append(document.createTextNode(String(day)));
     if (matches.length) {
+      const cell = element("button", "calendar-day has-activity");
+      cell.type = "button";
+      cell.setAttribute("aria-label", `${month + 1}月${day}日の活動詳細を見る`);
+      cell.append(document.createTextNode(String(day)));
       cell.append(element("span", "dot"));
       cell.title = `${matches.length}件の活動`;
       cell.addEventListener("click", () => {
-        state.selectedActivityId = matches[0].id;
         state.view = "list";
-        renderApp();
+        openActivity(matches[0].id, { scrollToDetail: true });
       });
+      grid.append(cell);
+    } else {
+      const cell = element("div", "calendar-day inactive-day", String(day));
+      cell.setAttribute("aria-disabled", "true");
+      grid.append(cell);
     }
-    grid.append(cell);
   }
   return grid;
 }
@@ -292,13 +302,16 @@ function renderActivityList() {
     const shortage = watchShortage(activity);
     const button = element("button", `activity-button${activity.id === state.selectedActivityId ? " active" : ""}`);
     button.type = "button";
+    button.setAttribute("aria-label", `${formatActivityTitle(activity)} の詳細を見る`);
     button.addEventListener("click", () => {
-      state.selectedActivityId = activity.id;
-      renderApp();
+      openActivity(activity.id, { scrollToDetail: true });
     });
     const title = element("div", "activity-title");
     title.append(element("strong", "", formatActivityTitle(activity)));
-    if (shortage.hasShortage) title.append(element("span", "attention-mark", "!"));
+    const titleActions = element("span", "activity-title-actions");
+    if (shortage.hasShortage) titleActions.append(element("span", "attention-mark", "!"));
+    titleActions.append(element("span", "activity-action", "詳細"));
+    title.append(titleActions);
     button.append(title);
     button.append(element("div", "meta", "", [
       element("span", "badge", activity.place || "場所未定"),
@@ -308,6 +321,18 @@ function renderActivityList() {
     list.append(button);
   });
   return list;
+}
+
+function openActivity(activityId, options = {}) {
+  state.selectedActivityId = activityId;
+  renderApp();
+  if (options.scrollToDetail && window.matchMedia("(max-width: 900px)").matches) {
+    requestAnimationFrame(() => {
+      const detail = document.querySelector("#activity-detail");
+      detail?.scrollIntoView({ behavior: "smooth", block: "start" });
+      detail?.focus({ preventScroll: true });
+    });
+  }
 }
 
 function renderActivityDetail(activity) {

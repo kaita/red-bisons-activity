@@ -88,7 +88,7 @@ async function serveAsset(request) {
   return new Response(body, {
     headers: {
       "Content-Type": contentType(target),
-      "Cache-Control": target.endsWith("index.html") ? "no-store" : "public, max-age=3600",
+      "Cache-Control": "no-store",
     },
   });
 }

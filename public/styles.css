@@ -41,6 +41,14 @@ button {
   cursor: pointer;
 }
 
+button:focus-visible,
+a.button:focus-visible,
+.activity-button:focus-visible,
+.calendar-day:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
 .app-shell {
   min-height: 100vh;
 }
@@ -237,36 +245,74 @@ button {
 
 .activity-list {
   display: grid;
+  gap: 8px;
   max-height: calc(100vh - 246px);
   overflow: auto;
+  padding: 10px;
 }
 
 .activity-button {
   display: grid;
   gap: 8px;
   width: 100%;
-  padding: 14px 16px;
-  border: 0;
-  border-bottom: 1px solid var(--line);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid transparent;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
-.activity-button:hover,
+.activity-button:hover {
+  border-color: #fca5a5;
+  background: #fffafa;
+  box-shadow: 0 4px 12px rgba(31, 41, 51, 0.08);
+  transform: translateY(-1px);
+}
+
 .activity-button.active {
+  border-color: #fca5a5;
+  border-left-color: var(--red);
   background: #f9fbfb;
+  box-shadow: inset 0 0 0 1px rgba(185, 28, 28, 0.1);
 }
 
 .activity-title {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .activity-title strong {
   font-size: 1rem;
+}
+
+.activity-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.activity-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.activity-action::after {
+  content: ">";
+  font-weight: 900;
 }
 
 .meta {
@@ -336,9 +382,29 @@ button {
   font-size: 0.76rem;
 }
 
+.calendar-day.empty-day {
+  border-color: transparent;
+  background: transparent;
+}
+
+.calendar-day.inactive-day {
+  background: #f9fafb;
+  color: var(--muted);
+}
+
 .calendar-day.has-activity {
   border-color: #fca5a5;
   background: #fff7f7;
+  color: var(--red-dark);
+  font-weight: 750;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.calendar-day.has-activity:hover {
+  border-color: var(--red);
+  background: #fff1f2;
+  box-shadow: 0 4px 12px rgba(31, 41, 51, 0.08);
+  transform: translateY(-1px);
 }
 
 .calendar-day .dot {
