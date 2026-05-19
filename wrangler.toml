@@ -1,9 +1,10 @@
 name = "red-bisons-activity"
 main = "src/worker.js"
 compatibility_date = "2026-05-17"
+workers_dev = true
+preview_urls = false
 
 [assets]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-

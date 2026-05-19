@@ -70,6 +70,12 @@ npm run dev:node
 
 本番相当のCloudflare Workersへデプロイして確認する。URL自体はインターネットから到達可能になるが、アプリデータはGoogleログインとサーバー側権限判定で保護される。
 
+現在のWorkers URL:
+
+```text
+https://red-bisons-activity.red-bisons-activity.workers.dev
+```
+
 ```bash
 npm run deploy
 ```
